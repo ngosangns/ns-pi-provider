@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeChatResponse, mergeDevinToolDeltas } from "../src/devin/protocol.ts";
+import { decodeChatResponse, mergeDevinToolDeltas } from "../src/devin/protocol.js";
 
 /** Minimal protobuf helpers matching protocol.ts encoding. */
 function varint(value: number | bigint): Buffer {
@@ -87,7 +87,7 @@ describe("devin swe-2 tool stream decode", () => {
 
 describe("buildChatRequest reads tools from transcript", () => {
   it("encodes tools from system toolsAdded when context.tools is empty", async () => {
-    const { buildChatRequest, normalizeSessionToken } = await import("../src/devin/protocol.ts");
+    const { buildChatRequest, normalizeSessionToken } = await import("../src/devin/protocol.js");
     const { normalizeContext } = await import("@earendil-works/pi-ai");
 
     const raw = {
