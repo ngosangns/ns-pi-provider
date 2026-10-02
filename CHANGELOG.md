@@ -1,3 +1,7 @@
+## 0.1.4
+
+- Republish of 0.1.3 (Devin await catalog before register) after npm staged-version conflict.
+
 # Changelog
 
 ## 0.1.3
