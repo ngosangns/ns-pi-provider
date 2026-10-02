@@ -79,29 +79,72 @@ function fromCatalog(models: CatalogModel[]): Model<Api>[] {
   }));
 }
 
-/** Resolve a Devin session token without logging secrets. */
-export function resolveDevinToken(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const fromEnv = env.DEVIN_API_KEY?.trim() || env.DEVIN_SESSION_TOKEN?.trim();
-  if (fromEnv) return fromEnv;
-
+/** Default Devin CLI credentials.toml locations (XDG + workspace mirror). */
+export function defaultDevinCredentialPaths(env: NodeJS.ProcessEnv = process.env): string[] {
+  const home = homedir();
+  const xdg = env.XDG_DATA_HOME?.trim() || join(home, ".local", "share");
   const paths = [
-    join(homedir(), ".local", "share", "devin", "credentials.toml"),
+    join(xdg, "devin", "credentials.toml"),
+    join(home, ".local", "share", "devin", "credentials.toml"),
     join("/workspace/.provider-creds/devin", "credentials.toml"),
   ];
-  for (const path of paths) {
+  // Deduplicate while preserving order
+  return [...new Set(paths)];
+}
+
+const DEVIN_TOML_TOKEN_RE =
+  /(?:windsurf_api_key|session_token|access_token|api_key|token)\s*=\s*(?:"([^"]+)"|'([^']+)')/i;
+
+/** Parse a Devin credentials.toml (or TOML-ish) file for a session/API token. */
+export function parseDevinCredentialsToml(text: string): string | undefined {
+  const match = text.match(DEVIN_TOML_TOKEN_RE);
+  return match?.[1] || match?.[2] || undefined;
+}
+
+export type ResolveDevinTokenOptions = {
+  /** Override credential file paths (for tests). */
+  paths?: string[];
+  /** When false, skip reading credential files. Default true. */
+  readFiles?: boolean;
+};
+
+/** Resolve a Devin session token without logging secrets. */
+export function resolveDevinToken(
+  env: NodeJS.ProcessEnv = process.env,
+  options: ResolveDevinTokenOptions = {},
+): string | undefined {
+  const fromEnv =
+    env.DEVIN_API_KEY?.trim() ||
+    env.DEVIN_SESSION_TOKEN?.trim() ||
+    env.WINDSURF_API_KEY?.trim();
+  if (fromEnv) return fromEnv;
+  if (options.readFiles === false) return undefined;
+
+  for (const path of options.paths ?? defaultDevinCredentialPaths(env)) {
     if (!existsSync(path)) continue;
     try {
-      const text = readFileSync(path, "utf8");
-      // TOML-ish: look for session_token / access_token / api_key = "..."
-      const match =
-        text.match(/(?:session_token|access_token|api_key|token)\s*=\s*"([^"]+)"/i) ||
-        text.match(/(?:session_token|access_token|api_key|token)\s*=\s*'([^']+)'/i);
-      if (match?.[1]) return match[1];
+      const token = parseDevinCredentialsToml(readFileSync(path, "utf8"));
+      if (token) return token;
     } catch {
-      // ignore
+      // ignore unreadable / corrupt
     }
   }
   return undefined;
+}
+
+/**
+ * Pi apiKey config so `--list-models` marks Devin configured when CLI creds
+ * already exist (no prior /login / auth.json entry required).
+ * Prefers env refs; falls back to a literal from credentials.toml.
+ */
+export function resolveDevinApiKeyConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  options: ResolveDevinTokenOptions = {},
+): string | undefined {
+  if (env.DEVIN_API_KEY?.trim()) return "$DEVIN_API_KEY";
+  if (env.DEVIN_SESSION_TOKEN?.trim()) return "$DEVIN_SESSION_TOKEN";
+  if (env.WINDSURF_API_KEY?.trim()) return "$WINDSURF_API_KEY";
+  return resolveDevinToken(env, { ...options, readFiles: options.readFiles !== false });
 }
 
 export async function refreshDevinModels(options: {
@@ -136,24 +179,29 @@ export async function refreshDevinModels(options: {
   }
 }
 
-function providerConfig(currentModels: Model<Api>[]) {
+function providerConfig(currentModels: Model<Api>[], apiKey?: string) {
   return {
     name: "Devin",
     api: API,
     baseUrl: BASE_URL,
     models: currentModels,
+    // When CLI credentials.toml (or env) already has a token, set apiKey so Pi
+    // marks the provider configured for --list-models without auth.json /login.
+    ...(apiKey ? { apiKey } : {}),
     async refreshModels({
       credential,
       signal,
       allowNetwork,
     }: {
-      credential?: { type: string; access?: string };
+      credential?: { type: string; access?: string; key?: string };
       signal: AbortSignal;
       allowNetwork: boolean;
     }) {
       if (!allowNetwork) return currentModels;
       const token =
-        (credential?.type === "oauth" ? credential.access : undefined) || resolveDevinToken();
+        (credential?.type === "oauth" ? credential.access : undefined) ||
+        (credential?.type === "api_key" ? credential.key : undefined) ||
+        resolveDevinToken();
       const refreshed = await refreshDevinModels({ force: true, signal, token });
       return refreshed.models;
     },
@@ -175,17 +223,19 @@ function providerConfig(currentModels: Model<Api>[]) {
 
 export function registerDevinProvider(pi: ExtensionAPI): void {
   let models = FALLBACK_MODELS;
-  pi.registerProvider(DEVIN_PROVIDER_ID, providerConfig(models));
+  let apiKeyConfig = resolveDevinApiKeyConfig();
+  pi.registerProvider(DEVIN_PROVIDER_ID, providerConfig(models, apiKeyConfig));
 
   pi.on("session_start", async (_event, ctx) => {
     try {
+      apiKeyConfig = resolveDevinApiKeyConfig() ?? apiKeyConfig;
       const apiKey =
         (await ctx.modelRegistry.getApiKeyForProvider?.(DEVIN_PROVIDER_ID)) || resolveDevinToken();
       if (!apiKey) return;
       const refreshed = await refreshDevinModels({ token: apiKey });
       if (refreshed.models.length) {
         models = refreshed.models;
-        pi.registerProvider(DEVIN_PROVIDER_ID, providerConfig(models));
+        pi.registerProvider(DEVIN_PROVIDER_ID, providerConfig(models, apiKeyConfig ?? apiKey));
       }
     } catch {
       // keep fallback

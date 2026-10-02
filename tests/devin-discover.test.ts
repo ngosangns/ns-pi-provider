@@ -66,3 +66,111 @@ describe("devin discovery + cache", () => {
     expect(fetchImpl.mock.calls.length).toBe(calls);
   });
 });
+
+describe("devin CLI credentials.toml auth", () => {
+  it("parseDevinCredentialsToml reads windsurf_api_key", async () => {
+    const { parseDevinCredentialsToml } = await import("../src/devin/register.js");
+    expect(
+      parseDevinCredentialsToml(`
+api_server_url = "https://server.codeium.com"
+windsurf_api_key = "devin-session-token$abc123"
+devin_webapp_host = "https://app.devin.ai"
+`),
+    ).toBe("devin-session-token$abc123");
+  });
+
+  it("resolveDevinToken reads credentials.toml without env", async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const { resolveDevinToken } = await import("../src/devin/register.js");
+
+    const dir = mkdtempSync(join(tmpdir(), "ns-pi-devin-cred-"));
+    const credPath = join(dir, "credentials.toml");
+    writeFileSync(
+      credPath,
+      'windsurf_api_key = "toml-only-token"\napi_server_url = "https://server.codeium.com"\n',
+      "utf8",
+    );
+    try {
+      expect(resolveDevinToken({}, { paths: [credPath] })).toBe("toml-only-token");
+      expect(resolveDevinToken({}, { paths: [credPath], readFiles: false })).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolveDevinApiKeyConfig prefers env ref then file literal", async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const { resolveDevinApiKeyConfig } = await import("../src/devin/register.js");
+
+    expect(resolveDevinApiKeyConfig({ DEVIN_API_KEY: "from-env" }, { readFiles: false })).toBe(
+      "$DEVIN_API_KEY",
+    );
+
+    const dir = mkdtempSync(join(tmpdir(), "ns-pi-devin-apikey-"));
+    const credPath = join(dir, "credentials.toml");
+    writeFileSync(credPath, 'windsurf_api_key = "file-token"\n', "utf8");
+    try {
+      expect(resolveDevinApiKeyConfig({}, { paths: [credPath] })).toBe("file-token");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("registerDevinProvider sets apiKey when credentials.toml exists", async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const { vi } = await import("vitest");
+
+    // Re-import after stubbing paths via env XDG_DATA_HOME
+    const dir = mkdtempSync(join(tmpdir(), "ns-pi-devin-xdg-"));
+    const credDir = join(dir, "devin");
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(credDir, { recursive: true });
+    writeFileSync(join(credDir, "credentials.toml"), 'windsurf_api_key = "xdg-token"\n', "utf8");
+
+    const prev = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = dir;
+    // Clear env tokens that would win
+    const prevDevin = process.env.DEVIN_API_KEY;
+    const prevSess = process.env.DEVIN_SESSION_TOKEN;
+    const prevWind = process.env.WINDSURF_API_KEY;
+    delete process.env.DEVIN_API_KEY;
+    delete process.env.DEVIN_SESSION_TOKEN;
+    delete process.env.WINDSURF_API_KEY;
+
+    try {
+      // Dynamic import of register after env is set — module already loaded, but
+      // resolveDevinApiKeyConfig reads env/paths at call time.
+      const { registerDevinProvider } = await import("../src/devin/register.js");
+      const providers = new Map<string, { apiKey?: string; models: unknown[]; oauth?: unknown }>();
+      const api = {
+        registerProvider: vi.fn((id: string, config: { apiKey?: string; models: unknown[]; oauth?: unknown }) => {
+          providers.set(id, config);
+        }),
+        registerCommand: vi.fn(),
+        on: vi.fn(),
+      };
+      registerDevinProvider(api as never);
+      const cfg = providers.get("devin");
+      expect(cfg).toBeTruthy();
+      expect(cfg!.apiKey).toBe("xdg-token");
+      expect(cfg!.oauth).toBeTruthy();
+      expect(Array.isArray(cfg!.models) && cfg!.models.length).toBeGreaterThan(0);
+    } finally {
+      if (prev === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = prev;
+      if (prevDevin === undefined) delete process.env.DEVIN_API_KEY;
+      else process.env.DEVIN_API_KEY = prevDevin;
+      if (prevSess === undefined) delete process.env.DEVIN_SESSION_TOKEN;
+      else process.env.DEVIN_SESSION_TOKEN = prevSess;
+      if (prevWind === undefined) delete process.env.WINDSURF_API_KEY;
+      else process.env.WINDSURF_API_KEY = prevWind;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
