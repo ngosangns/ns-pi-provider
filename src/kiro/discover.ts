@@ -145,22 +145,29 @@ export async function discoverKiroModels(
 
   log.debug("discover.request", { baseUrl, origin: KIRO_ORIGIN });
 
+  // ksk_ API keys need `tokentype: API_KEY`. OAuth/IdC/desktop bearers must
+  // omit it — sending API_KEY with an SSO access token yields HTTP 403
+  // "bearer token ... is invalid" even when the token is fresh.
+  const headers: Record<string, string> = {
+    "Content-Type": "application/x-amz-json-1.0",
+    Accept: "application/json",
+    Authorization: `Bearer ${apiKey}`,
+    "X-Amz-Target": LIST_TARGET,
+    "x-amzn-codewhisperer-optout": "true",
+    "amz-sdk-invocation-id": crypto.randomUUID(),
+    "amz-sdk-request": "attempt=1; max=1",
+    "x-amz-user-agent": ua,
+    "user-agent": ua,
+  };
+  if (apiKey.startsWith("ksk_")) {
+    headers.tokentype = "API_KEY";
+  }
+
   let response: Response;
   try {
     response = await fetch(baseUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-amz-json-1.0",
-        Accept: "application/json",
-        Authorization: `Bearer ${apiKey}`,
-        tokentype: "API_KEY",
-        "X-Amz-Target": LIST_TARGET,
-        "x-amzn-codewhisperer-optout": "true",
-        "amz-sdk-invocation-id": crypto.randomUUID(),
-        "amz-sdk-request": "attempt=1; max=1",
-        "x-amz-user-agent": ua,
-        "user-agent": ua,
-      },
+      headers,
       // `origin` filters the result server-side and must match what
       // stream.ts sends on GenerateAssistantResponse, or we would advertise
       // models the chat path cannot actually use.

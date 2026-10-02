@@ -98,7 +98,14 @@ function isKiroAuthMethod(value: unknown): value is KiroAuthMethod {
 
 function normalizeStoredAuthMethod(value: unknown): KiroAuthMethod | undefined {
   if (value === undefined || value === null || value === "") return "builder-id";
-  return isKiroAuthMethod(value) ? value : undefined;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  // IAM Identity Center / Enterprise IdC uses the same OIDC token endpoint as
+  // Builder ID. Stored creds often say "IdC" / "idc" / "IDC".
+  if (normalized === "idc" || normalized === "identity-center" || normalized === "iam-identity-center") {
+    return "builder-id";
+  }
+  return isKiroAuthMethod(normalized) ? (normalized as KiroAuthMethod) : (isKiroAuthMethod(value) ? value : undefined);
 }
 
 function base64UrlRandom(bytes: number): string {

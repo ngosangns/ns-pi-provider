@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { CatalogCache } from "../src/shared/catalog-cache.js";
 import { refreshKiroModels, resolveKiroDiscoveryToken, kiroListBaseUrl } from "../src/kiro/register.js";
+import { discoverKiroModels } from "../src/kiro/discover.js";
 
 describe("kiro discovery + cache", () => {
   let cache: CatalogCache;
@@ -111,5 +114,58 @@ describe("kiro discovery + cache", () => {
     });
     // force token undefined by not setting env — pass empty token explicitly via omitting
     expect(result.models).toEqual(fallback);
+  });
+
+  it("discover omits tokentype for OAuth bearers and sets it for ksk_ keys", async () => {
+    const calls: Array<{ headers: Headers }> = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ headers: new Headers(init?.headers) });
+      return new Response(
+        JSON.stringify({
+          models: [{ modelId: "claude-sonnet-4.6", modelName: "Claude Sonnet 4.6", supportedInputTypes: ["TEXT"] }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+    try {
+      await discoverKiroModels("oauth-bearer-not-a-key", "https://q.us-east-1.amazonaws.com/");
+      expect(calls[0].headers.get("tokentype")).toBeNull();
+      await discoverKiroModels("ksk_test_key_not_real", "https://q.us-east-1.amazonaws.com/");
+      expect(calls[1].headers.get("tokentype")).toBe("API_KEY");
+      expect(calls[1].headers.get("X-Amz-Target")).toBe("AmazonCodeWhispererService.ListAvailableModels");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("resolveKiroDiscoveryToken prefers freshest non-expired file token", () => {
+    const dir = "/tmp/ns-pi-kiro-token-pick";
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    const stale = join(dir, "stale.json");
+    const fresh = join(dir, "fresh.json");
+    writeFileSync(
+      stale,
+      JSON.stringify({
+        accessToken: "stale-token",
+        region: "us-west-2",
+        expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    );
+    writeFileSync(
+      fresh,
+      JSON.stringify({
+        accessToken: "fresh-token",
+        region: "eu-west-1",
+        authMethod: "IdC",
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      }),
+    );
+    const hit = resolveKiroDiscoveryToken({}, { paths: [stale, fresh] });
+    expect(hit?.token).toBe("fresh-token");
+    expect(hit?.region).toBe("eu-west-1");
+    expect(hit?.authMethod).toBe("IdC");
+    rmSync(dir, { recursive: true, force: true });
   });
 });

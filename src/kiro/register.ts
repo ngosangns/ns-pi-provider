@@ -11,6 +11,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -105,39 +106,156 @@ function toProviderModels(models: CatalogModel[], config: ExtensionConfig) {
 }
 
 /** Resolve a bearer/API key for discovery without throwing when missing. */
-export function resolveKiroDiscoveryToken(
-  env: NodeJS.ProcessEnv = process.env,
-  options: { paths?: string[]; readFiles?: boolean } = {},
-): { token: string; source: string } | undefined {
-  const envKey = firstEnv(["KIRO_API_KEY", "KIRO_ACCESS_TOKEN", "AMAZON_Q_TOKEN"], env);
-  if (envKey) return { token: envKey, source: "env" };
-  if (options.readFiles === false) return undefined;
+export type KiroDiscoveryToken = {
+  token: string;
+  source: string;
+  region?: string;
+  authMethod?: string;
+  expiresAt?: number;
+};
 
-  const candidates = options.paths ?? [
-    join(homedir(), ".aws", "sso", "cache", "kiro-auth-token.json"),
-    join(homedir(), ".aws", "sso", "cache", "kiro-auth-token-cli.json"),
-    join("/workspace/.provider-creds/aws-sso", "kiro-auth-token.json"),
-    join("/workspace/.provider-creds/aws-sso", "kiro-auth-token-cli.json"),
-  ];
-  for (const path of candidates) {
-    if (!existsSync(path)) continue;
-    try {
-      const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-      const token =
-        (typeof raw.accessToken === "string" && raw.accessToken) ||
-        (typeof raw.access_token === "string" && raw.access_token) ||
-        (typeof raw.token === "string" && raw.token) ||
-        undefined;
-      if (token) return { token, source: path };
-    } catch {
-      // ignore unreadable / corrupt
-    }
+function parseExpiresAt(raw: Record<string, unknown>): number | undefined {
+  const expiresAt = raw.expiresAt ?? raw.expires_at;
+  if (typeof expiresAt === "string") {
+    const ms = Date.parse(expiresAt);
+    return Number.isFinite(ms) ? ms : undefined;
+  }
+  if (typeof expiresAt === "number" && Number.isFinite(expiresAt)) {
+    // pi auth stores ms; SSO cache never does — treat large values as ms.
+    return expiresAt < 1_000_000_000_000 ? expiresAt * 1000 : expiresAt;
+  }
+  if (typeof raw.expires === "number" && Number.isFinite(raw.expires)) {
+    return raw.expires < 1_000_000_000_000 ? raw.expires * 1000 : raw.expires;
   }
   return undefined;
 }
 
-export function kiroRegion(env: NodeJS.ProcessEnv = process.env): string {
-  return firstEnv(["KIRO_API_REGION", "AWS_REGION", "AWS_DEFAULT_REGION"], env) ?? "us-east-1";
+function tokenFromRecord(raw: Record<string, unknown>, source: string): KiroDiscoveryToken | undefined {
+  const token =
+    (typeof raw.accessToken === "string" && raw.accessToken) ||
+    (typeof raw.access_token === "string" && raw.access_token) ||
+    (typeof raw.access === "string" && raw.access) ||
+    (typeof raw.token === "string" && raw.token) ||
+    undefined;
+  if (!token) return undefined;
+  const region =
+    (typeof raw.region === "string" && raw.region.trim()) ||
+    undefined;
+  const authMethod =
+    (typeof raw.authMethod === "string" && raw.authMethod) ||
+    (typeof raw.auth_method === "string" && raw.auth_method) ||
+    undefined;
+  return {
+    token,
+    source,
+    ...(region ? { region } : {}),
+    ...(authMethod ? { authMethod } : {}),
+    ...(parseExpiresAt(raw) !== undefined ? { expiresAt: parseExpiresAt(raw) } : {}),
+  };
+}
+
+function readJsonObject(path: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // ignore unreadable / corrupt
+  }
+  return undefined;
+}
+
+/** Prefer non-expired tokens; when all are expired, still return the freshest. */
+function pickBestToken(candidates: KiroDiscoveryToken[]): KiroDiscoveryToken | undefined {
+  if (candidates.length === 0) return undefined;
+  const now = Date.now();
+  const fresh = candidates.filter((c) => c.expiresAt === undefined || c.expiresAt > now + 30_000);
+  const pool = fresh.length > 0 ? fresh : candidates;
+  return pool.sort((a, b) => (b.expiresAt ?? 0) - (a.expiresAt ?? 0))[0];
+}
+
+function defaultKiroTokenPaths(): string[] {
+  const home = homedir();
+  const paths = [
+    join(home, ".aws", "sso", "cache", "kiro-auth-token.json"),
+    join(home, ".aws", "sso", "cache", "kiro-auth-token-cli.json"),
+    join(home, ".pi", "agent", "auth.json"),
+    join("/workspace/.provider-creds/aws-sso", "kiro-auth-token.json"),
+    join("/workspace/.provider-creds/aws-sso", "kiro-auth-token-cli.json"),
+    join("/workspace/.provider-creds/aws-sso", "kiro-auth-token-live.json"),
+  ];
+  // kiro-cli SQLite is handled separately (optional); JSON export path if present.
+  const macSupport = join(home, "Library", "Application Support", "kiro-cli", "data.sqlite3");
+  if (existsSync(macSupport)) paths.unshift(macSupport);
+  const linuxSupport = join(home, ".local", "share", "kiro-cli", "data.sqlite3");
+  if (existsSync(linuxSupport)) paths.unshift(linuxSupport);
+  return paths;
+}
+
+function tokenFromKiroCliSqlite(path: string): KiroDiscoveryToken | undefined {
+  // Avoid a native sqlite dependency: shell out to `sqlite3` when available.
+  try {
+    const value = execFileSync(
+      "sqlite3",
+      [path, "SELECT value FROM auth_kv WHERE key='kirocli:odic:token' LIMIT 1;"],
+      { encoding: "utf8", timeout: 5_000 },
+    ).trim();
+    if (!value) return undefined;
+    const raw = JSON.parse(value) as Record<string, unknown>;
+    return tokenFromRecord(raw, path);
+  } catch {
+    return undefined;
+  }
+}
+
+export function resolveKiroDiscoveryToken(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { paths?: string[]; readFiles?: boolean } = {},
+): KiroDiscoveryToken | undefined {
+  const envKey = firstEnv(["KIRO_API_KEY", "KIRO_ACCESS_TOKEN", "AMAZON_Q_TOKEN"], env);
+  if (envKey) {
+    return {
+      token: envKey,
+      source: "env",
+      region: firstEnv(["KIRO_API_REGION", "AWS_REGION", "AWS_DEFAULT_REGION"], env),
+    };
+  }
+  if (options.readFiles === false) return undefined;
+
+  const candidates: KiroDiscoveryToken[] = [];
+  const paths = options.paths ?? defaultKiroTokenPaths();
+  for (const path of paths) {
+    if (!existsSync(path)) continue;
+    if (path.endsWith(".sqlite3") || path.endsWith(".db")) {
+      const hit = tokenFromKiroCliSqlite(path);
+      if (hit) candidates.push(hit);
+      continue;
+    }
+    const raw = readJsonObject(path);
+    if (!raw) continue;
+    // pi agent auth.json nests under `.kiro`
+    if (path.endsWith("auth.json") && raw.kiro && typeof raw.kiro === "object" && !Array.isArray(raw.kiro)) {
+      const hit = tokenFromRecord(raw.kiro as Record<string, unknown>, `${path}#kiro`);
+      if (hit) candidates.push(hit);
+      continue;
+    }
+    const hit = tokenFromRecord(raw, path);
+    if (hit) candidates.push(hit);
+  }
+  return pickBestToken(candidates);
+}
+
+export function kiroRegion(
+  env: NodeJS.ProcessEnv = process.env,
+  token?: KiroDiscoveryToken,
+): string {
+  return (
+    firstEnv(["KIRO_API_REGION", "AWS_REGION", "AWS_DEFAULT_REGION"], env) ??
+    token?.region ??
+    resolveKiroDiscoveryToken(env)?.region ??
+    "us-east-1"
+  );
 }
 
 export function kiroListBaseUrl(region = kiroRegion()): string {
@@ -155,14 +273,18 @@ export async function refreshKiroModels(options: {
 } = {}): Promise<{ models: CatalogModel[]; fromCache: boolean }> {
   const cache = options.cache ?? getDefaultCatalogCache();
   const fallback = options.fallback ?? [];
-  const token =
-    "token" in options ? options.token : resolveKiroDiscoveryToken()?.token;
+  const resolved = "token" in options
+    ? (options.token
+        ? { token: options.token, source: "options", region: undefined as string | undefined }
+        : undefined)
+    : resolveKiroDiscoveryToken();
+  const token = resolved?.token;
   if (!token) {
     const lookup = cache.lookup<CatalogModel>(KIRO_PROVIDER_ID);
     if (lookup.hit) return { models: lookup.snapshot.models, fromCache: true };
     return { models: fallback, fromCache: false };
   }
-  const baseUrl = options.baseUrl ?? kiroListBaseUrl();
+  const baseUrl = options.baseUrl ?? kiroListBaseUrl(kiroRegion(process.env, resolved as KiroDiscoveryToken));
 
   try {
     const result = await cache.getOrFetch<CatalogModel>(
