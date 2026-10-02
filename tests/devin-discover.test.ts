@@ -173,4 +173,20 @@ devin_webapp_host = "https://app.devin.ai"
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("escapeDevinApiKeyLiteral doubles dollar signs for Pi config", async () => {
+    const { escapeDevinApiKeyLiteral, resolveDevinApiKeyConfig } = await import("../src/devin/register.js");
+    expect(escapeDevinApiKeyLiteral("devin-session-token$abc")).toBe("devin-session-token$$abc");
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const dir = mkdtempSync(join(tmpdir(), "ns-pi-devin-esc-"));
+    const credPath = join(dir, "credentials.toml");
+    writeFileSync(credPath, 'windsurf_api_key = "devin-session-token$raw-secret"\n', "utf8");
+    try {
+      expect(resolveDevinApiKeyConfig({}, { paths: [credPath] })).toBe("devin-session-token$$raw-secret");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

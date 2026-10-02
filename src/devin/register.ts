@@ -133,9 +133,21 @@ export function resolveDevinToken(
 }
 
 /**
+ * Escape a literal API key for Pi config-value parsing.
+ * Devin session tokens contain `$` (prefix `devin-session-token$…`); Pi treats
+ * `$VAR` as env interpolation, so unescaped literals fail auth checks and
+ * `--list-models` hides the provider. `$$` is the documented escape.
+ */
+export function escapeDevinApiKeyLiteral(token: string): string {
+  // Double every "$" so Pi's config resolver treats them as literals.
+  // Use a replacer fn: String.replaceAll treats "$$" in the replacement string as a single "$".
+  return token.replaceAll("$", () => "$$");
+}
+
+/**
  * Pi apiKey config so `--list-models` marks Devin configured when CLI creds
  * already exist (no prior /login / auth.json entry required).
- * Prefers env refs; falls back to a literal from credentials.toml.
+ * Prefers env refs; falls back to an escaped literal from credentials.toml.
  */
 export function resolveDevinApiKeyConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -144,7 +156,8 @@ export function resolveDevinApiKeyConfig(
   if (env.DEVIN_API_KEY?.trim()) return "$DEVIN_API_KEY";
   if (env.DEVIN_SESSION_TOKEN?.trim()) return "$DEVIN_SESSION_TOKEN";
   if (env.WINDSURF_API_KEY?.trim()) return "$WINDSURF_API_KEY";
-  return resolveDevinToken(env, { ...options, readFiles: options.readFiles !== false });
+  const token = resolveDevinToken(env, { ...options, readFiles: options.readFiles !== false });
+  return token ? escapeDevinApiKeyLiteral(token) : undefined;
 }
 
 export async function refreshDevinModels(options: {
@@ -235,7 +248,7 @@ export function registerDevinProvider(pi: ExtensionAPI): void {
       const refreshed = await refreshDevinModels({ token: apiKey });
       if (refreshed.models.length) {
         models = refreshed.models;
-        pi.registerProvider(DEVIN_PROVIDER_ID, providerConfig(models, apiKeyConfig ?? apiKey));
+        pi.registerProvider(DEVIN_PROVIDER_ID, providerConfig(models, apiKeyConfig ?? escapeDevinApiKeyLiteral(apiKey)));
       }
     } catch {
       // keep fallback

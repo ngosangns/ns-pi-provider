@@ -3,6 +3,7 @@ export {
   refreshDevinModels,
   resolveDevinToken,
   resolveDevinApiKeyConfig,
+  escapeDevinApiKeyLiteral,
   parseDevinCredentialsToml,
   defaultDevinCredentialPaths,
   DEVIN_PROVIDER_ID,
