@@ -55,7 +55,7 @@ NS_PI_LIVE=1 npm run test:live   # optional live smoke when creds present
 
 ## Publish
 
-Tag a release (`v0.1.0`) to run `.github/workflows/publish.yml`.
+Tag a release (`v0.1.0`) to run publish workflow (templates under `docs/github-workflows/`; copy into `.github/workflows/` after granting the `workflow` OAuth scope).
 
 - **npm**: set repository secret `NPM_TOKEN`
 - **GitHub Packages**: uses `GITHUB_TOKEN` (scoped `@ngosangns`)
