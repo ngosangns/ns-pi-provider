@@ -155,7 +155,7 @@ devin_webapp_host = "https://app.devin.ai"
         registerCommand: vi.fn(),
         on: vi.fn(),
       };
-      registerDevinProvider(api as never);
+      await registerDevinProvider(api as never);
       const cfg = providers.get("devin");
       expect(cfg).toBeTruthy();
       expect(cfg!.apiKey).toBe("xdg-token");

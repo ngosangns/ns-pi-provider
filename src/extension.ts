@@ -17,7 +17,10 @@ export interface NsPiProviderOptions {
   grok?: boolean;
 }
 
-export function registerAllProviders(pi: ExtensionAPI, options: NsPiProviderOptions = {}): void {
+export async function registerAllProviders(
+  pi: ExtensionAPI,
+  options: NsPiProviderOptions = {},
+): Promise<void> {
   const enableKiro = options.kiro !== false;
   const enableDevin = options.devin !== false;
   const enableGrok = options.grok !== false;
@@ -33,7 +36,7 @@ export function registerAllProviders(pi: ExtensionAPI, options: NsPiProviderOpti
   }
   if (enableDevin) {
     try {
-      registerDevinProvider(pi);
+      await registerDevinProvider(pi);
     } catch (err) {
       console.warn(
         `[ns-pi-provider] devin registration failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -105,8 +108,8 @@ export function registerAllProviders(pi: ExtensionAPI, options: NsPiProviderOpti
   });
 }
 
-export default function nsPiProviderExtension(pi: ExtensionAPI): void {
-  registerAllProviders(pi);
+export default async function nsPiProviderExtension(pi: ExtensionAPI): Promise<void> {
+  await registerAllProviders(pi);
 }
 
 export {

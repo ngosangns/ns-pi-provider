@@ -26,10 +26,10 @@ function mockPi() {
 }
 
 describe("extension registration", () => {
-  it("registers kiro, devin, grok without crashing when creds missing", () => {
+  it("registers kiro, devin, grok without crashing when creds missing", async () => {
     const { api, providers, commands } = mockPi();
     // Should not throw
-    registerAllProviders(api as never, {});
+    await registerAllProviders(api as never, {});
     expect(providers.has("kiro")).toBe(true);
     expect(providers.has("devin")).toBe(true);
     expect(providers.has("grok")).toBe(true);
@@ -46,9 +46,9 @@ describe("extension registration", () => {
     }
   });
 
-  it("can disable individual providers", () => {
+  it("can disable individual providers", async () => {
     const { api, providers } = mockPi();
-    registerAllProviders(api as never, { kiro: false, grok: false });
+    await registerAllProviders(api as never, { kiro: false, grok: false });
     expect(providers.has("kiro")).toBe(false);
     expect(providers.has("grok")).toBe(false);
     expect(providers.has("devin")).toBe(true);

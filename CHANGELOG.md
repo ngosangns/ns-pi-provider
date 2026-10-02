@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- fix(devin): await `refreshDevinModels` in async extension factory before first `registerProvider`, so `pi --list-models` / `-p` see discovered models (e.g. `swe-2-medium`/`high`/`max`) without interactive `session_start`.
+
 ## 0.1.2
 
 - fix(devin): escape `$` in CLI session tokens when seeding Pi `apiKey` (`devin-session-token$…` → `$$`) so `--list-models` marks Devin configured.

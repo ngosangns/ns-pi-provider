@@ -234,9 +234,20 @@ function providerConfig(currentModels: Model<Api>[], apiKey?: string) {
   };
 }
 
-export function registerDevinProvider(pi: ExtensionAPI): void {
-  let models = FALLBACK_MODELS;
+export async function registerDevinProvider(pi: ExtensionAPI): Promise<void> {
   let apiKeyConfig = resolveDevinApiKeyConfig();
+  // Await catalog before first register so --list-models / -p see swe-2-* (and the
+  // full discovery set) without waiting for interactive session_start. Pi awaits
+  // async extension factories before startup model selection.
+  let models = FALLBACK_MODELS;
+  try {
+    const refreshed = await refreshDevinModels({
+      token: resolveDevinToken() || undefined,
+    });
+    if (refreshed.models.length) models = refreshed.models;
+  } catch {
+    // keep FALLBACK_MODELS
+  }
   pi.registerProvider(DEVIN_PROVIDER_ID, providerConfig(models, apiKeyConfig));
 
   pi.on("session_start", async (_event, ctx) => {
@@ -251,7 +262,7 @@ export function registerDevinProvider(pi: ExtensionAPI): void {
         pi.registerProvider(DEVIN_PROVIDER_ID, providerConfig(models, apiKeyConfig ?? escapeDevinApiKeyLiteral(apiKey)));
       }
     } catch {
-      // keep fallback
+      // keep current models
     }
   });
 
