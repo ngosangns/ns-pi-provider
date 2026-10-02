@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+*.tgz
+.DS_Store
+*.log
+.env
+.env.*
+.provider-creds/
+/workspace/.provider-creds/
+*.pem
+*.key
+auth.json
+credentials.toml
+kiro-auth-token*.json
+.vitest/

@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "debug": false,
+  "providerId": "kiro",
+  "displayName": "Kiro",
+  "upstreamUrl": "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"
+}

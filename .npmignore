@@ -1,0 +1,7 @@
+tests/
+.github/
+vitest.config.ts
+tsconfig.json
+*.test.ts
+.provider-creds/
+coverage/

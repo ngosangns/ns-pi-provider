@@ -1,0 +1,15 @@
+ns-pi-provider
+Copyright (c) 2026 ngosangns
+
+This package adapts patterns and portions of the following MIT-licensed projects:
+
+- pi-kiro-provider (MasuRii) — https://github.com/MasuRii/pi-kiro-provider
+- pi-kiro-api (satiyap) — https://github.com/satiyap/pi-kiro-api
+  (which itself vendors streaming core from pi-kiro under MIT)
+- pi-devin-provider (fadlee) — https://github.com/fadlee/pi-devin-provider
+- pi-grok-sdk (Ankit Chouhan) — https://github.com/ankitchouhan1020/pi-grok-sdk
+- grok-pi — model-cache / CLI bridge patterns
+- Pi custom-provider docs and examples from badlogic/pi-mono / earendil-works
+
+See each upstream LICENSE for full copyright notices. Adaptations are under the
+MIT license of this package; original authorship remains with upstream authors.
