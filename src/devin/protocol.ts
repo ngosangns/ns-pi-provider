@@ -1,6 +1,7 @@
 // @ts-nocheck — vendored upstream; adapted under MIT (see NOTICE)
 import { gunzipSync, gzipSync } from "node:zlib";
 import type { Api, Context, Message, Model, SimpleStreamOptions, Tool } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt, getCurrentTools, withoutInitialSystemMessage } from "@earendil-works/pi-ai";
 
 export const DEVIN_HOST = "https://server.codeium.com";
 const API_KEY_PREFIX = "devin-session-token$";
@@ -39,8 +40,14 @@ export function buildChatRequest(
 	userJwt: string,
 ): Buffer {
 	const cascadeId = options.sessionId ?? crypto.randomUUID();
-	const prompts = context.messages.flatMap(messageForWire).map((item, index) => encodePrompt(item, `${cascadeId}-${index}`));
-	const tools = (context.tools ?? []).map(encodeTool);
+	// After Pi's normalizeContext(), tools + system prompt live on system messages
+	// (toolsAdded), not context.tools / context.systemPrompt. Built-in providers use
+	// getCurrentTools(messages); we must too or swe-2 sees zero tools.
+	const systemPrompt = context.systemPrompt || getCurrentSystemPrompt(context.messages) || "";
+	const history = withoutInitialSystemMessage(context.messages);
+	const prompts = history.flatMap(messageForWire).map((item, index) => encodePrompt(item, `${cascadeId}-${index}`));
+	const toolDefs = (context.tools?.length ? context.tools : getCurrentTools(context.messages)) as Tool[];
+	const tools = toolDefs.map(encodeTool);
 	const configuration = concat(
 		varintField(1, 1n),
 		varintField(2, BigInt(options.maxTokens ?? model.maxTokens ?? 64000)),
@@ -60,7 +67,7 @@ export function buildChatRequest(
 	);
 	return concat(
 		message(1, encodeMetadata(normalizeSessionToken(apiKey), userJwt)),
-		context.systemPrompt ? stringField(2, context.systemPrompt) : Buffer.alloc(0),
+		systemPrompt ? stringField(2, systemPrompt) : Buffer.alloc(0),
 		...prompts.map(prompt => message(3, prompt)),
 		varintField(7, 5n),
 		message(8, configuration),
@@ -101,7 +108,8 @@ export function parseConnectFrames(input: Uint8Array): DevinFrame[] {
 export type DevinDelta =
 	| { type: "text"; value: string }
 	| { type: "thinking"; value: string; signature?: string }
-	| { type: "tool"; id: string; name: string; argumentsJson: string }
+	/** Tool-call stream chunk. Start frames include id+name; later frames often only argumentsJson. */
+	| { type: "tool"; id?: string; name?: string; argumentsJson: string }
 	| { type: "usage"; input: number; output: number; cacheRead: number; cacheWrite: number }
 	| { type: "stop"; reason: number }
 	| { type: "message"; id: string };
@@ -151,13 +159,15 @@ function encodeMetadata(apiKey: string, userJwt: string | undefined): Buffer {
 }
 
 function messageForWire(message: Message): WireMessage[] {
+	if (message.role === "system") return [];
 	if (message.role === "user") return [{ role: 1, text: contentText(message.content) }];
 	if (message.role === "toolResult") return [{ role: 4, text: contentText(message.content), toolCallId: message.toolCallId }];
+	// Devin/Windsurf: user=1, assistant=2, tool=4 (see pi-devin SOURCE_BY_ROLE).
 	const items: WireMessage[] = [];
 	for (const content of message.content) {
-		if (content.type === "text") items.push({ role: 1, text: content.text });
-		else if (content.type === "thinking") items.push({ role: 1, text: content.thinking });
-		else if (content.type === "toolCall") items.push({ role: 1, text: "", toolCalls: [{ id: content.id, name: content.name, argumentsJson: JSON.stringify(content.arguments) }] });
+		if (content.type === "text") items.push({ role: 2, text: content.text });
+		else if (content.type === "thinking") items.push({ role: 2, text: content.thinking });
+		else if (content.type === "toolCall") items.push({ role: 2, text: "", toolCalls: [{ id: content.id, name: content.name, argumentsJson: JSON.stringify(content.arguments) }] });
 	}
 	return items;
 }
@@ -186,7 +196,44 @@ function contentText(content: string | { type: "text"; text: string }[]): string
 
 function decodeToolCall(payload: Buffer): DevinDelta {
 	const values = new Map(fields(payload).filter(field => field.wire === 2).map(field => [field.number, text(field.value)]));
-	return { type: "tool", id: values.get(1) ?? crypto.randomUUID(), name: values.get(2) ?? "tool", argumentsJson: values.get(3) ?? "" };
+	// Do NOT invent id/name for args-only frames — swe-2 streams field 3 alone after the start frame.
+	return {
+		type: "tool",
+		id: values.get(1),
+		name: values.get(2),
+		argumentsJson: values.get(3) ?? "",
+	};
+}
+
+/**
+ * Merge streamed tool deltas into open tool calls.
+ * Windsurf/swe-2 sends: (1) id+name start, then (2) many args-only chunks with only field 3.
+ */
+export function mergeDevinToolDeltas(
+	deltas: Extract<DevinDelta, { type: "tool" }>[],
+): { id: string; name: string; argumentsJson: string }[] {
+	const order: string[] = [];
+	const byId = new Map<string, { id: string; name: string; argumentsJson: string }>();
+	let currentId: string | undefined;
+	for (const delta of deltas) {
+		if (delta.id && delta.name) {
+			currentId = delta.id;
+			if (!byId.has(delta.id)) {
+				byId.set(delta.id, { id: delta.id, name: delta.name, argumentsJson: "" });
+				order.push(delta.id);
+			} else {
+				byId.get(delta.id)!.name = delta.name;
+			}
+		}
+		const id = delta.id ?? currentId;
+		if (!id) continue;
+		const open = byId.get(id);
+		if (!open) continue;
+		const chunk = delta.argumentsJson ?? "";
+		if (!chunk) continue;
+		open.argumentsJson = chunk.startsWith(open.argumentsJson) ? chunk : open.argumentsJson + chunk;
+	}
+	return order.map((id) => byId.get(id)!);
 }
 
 function decodeUsage(payload: Buffer): DevinDelta {

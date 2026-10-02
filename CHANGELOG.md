@@ -1,3 +1,9 @@
+## 0.1.5
+
+- fix(devin): read tools/system prompt via `getCurrentTools` / `getCurrentSystemPrompt` after Pi `normalizeContext` (tools live on system `toolsAdded`, so `context.tools` was always empty under RPC).
+- fix(devin): assemble swe-2 streamed tool calls — args-only protobuf frames no longer mint a new id/name (`tool`), so bash/read/edit/write actually execute under Pi RPC.
+- fix(devin): encode assistant history as role `2` (user=1, tool=4); treat stop reason `10` as `toolUse`.
+
 ## 0.1.4
 
 - Republish of 0.1.3 (Devin await catalog before register) after npm staged-version conflict.

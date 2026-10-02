@@ -46,6 +46,18 @@ export function streamDevin(model: Model<Api>, context: Context, options?: Simpl
 			const host = model.baseUrl || DEVIN_HOST;
 			const userJwt = await getUserJwt(apiKey, options?.signal, fetchImpl);
 			const request = frameConnect(buildChatRequest(model, context, options ?? {}, apiKey, userJwt));
+			if (process.env.NS_PI_DEBUG_TOOLS) {
+				const { appendFileSync } = await import("node:fs");
+				const { getCurrentTools } = await import("@earendil-works/pi-ai");
+				const resolved = context.tools?.length ? context.tools : getCurrentTools(context.messages);
+				appendFileSync("/tmp/ns-pi-debug-tools.log", JSON.stringify({
+					t: Date.now(), model: model.id,
+					contextToolCount: context.tools?.length ?? 0,
+					resolvedToolCount: resolved?.length ?? 0,
+					toolNames: (resolved ?? []).map((x: { name?: string }) => x?.name),
+					msgCount: context.messages?.length ?? 0,
+				}) + "\n");
+			}
 			const response = await fetchImpl(`${host}${CHAT_PATH}`, {
 				method: "POST",
 				headers: {
@@ -69,6 +81,7 @@ export function streamDevin(model: Model<Api>, context: Context, options?: Simpl
 			let thinkingBlock: ThinkingContent | undefined;
 			const tools = new Map<string, ToolCall>();
 			const partialTools = new Map<string, string>();
+			let currentToolId: string | undefined;
 			let stopReason = 0;
 
 			for (;;) {
@@ -112,20 +125,30 @@ export function streamDevin(model: Model<Api>, context: Context, options?: Simpl
 							endThinking(stream, output, thinkingBlock);
 							textBlock = undefined;
 							thinkingBlock = undefined;
-							let tool = tools.get(delta.id);
+							// swe-2 streams: start frame has id+name; later frames often only argumentsJson.
+							if (delta.id && delta.name) {
+								currentToolId = delta.id;
+							}
+							const toolId = delta.id ?? currentToolId;
+							if (!toolId) continue;
+							let tool = tools.get(toolId);
 							if (!tool) {
-								tool = { type: "toolCall", id: delta.id, name: delta.name, arguments: {} };
-								tools.set(delta.id, tool);
-								partialTools.set(delta.id, "");
+								if (!delta.name) continue; // args-only before start — ignore
+								tool = { type: "toolCall", id: toolId, name: delta.name, arguments: {} };
+								tools.set(toolId, tool);
+								partialTools.set(toolId, "");
 								output.content.push(tool);
 								stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
 							}
-							tool.name = delta.name || tool.name;
-							const previous = partialTools.get(delta.id) ?? "";
-							const accumulated = delta.argumentsJson.startsWith(previous) ? delta.argumentsJson : previous + delta.argumentsJson;
-							partialTools.set(delta.id, accumulated);
+							if (delta.name) tool.name = delta.name;
+							const previous = partialTools.get(toolId) ?? "";
+							const chunk = delta.argumentsJson ?? "";
+							const accumulated = !chunk ? previous : chunk.startsWith(previous) ? chunk : previous + chunk;
+							partialTools.set(toolId, accumulated);
 							try { tool.arguments = JSON.parse(accumulated) as Record<string, unknown>; } catch { /* partial JSON */ }
-							stream.push({ type: "toolcall_delta", contentIndex: output.content.indexOf(tool), delta: accumulated.slice(previous.length), partial: output });
+							if (chunk) {
+								stream.push({ type: "toolcall_delta", contentIndex: output.content.indexOf(tool), delta: accumulated.slice(previous.length), partial: output });
+							}
 						}
 						if (delta.type === "usage") {
 							output.usage.input = delta.input;
@@ -143,8 +166,17 @@ export function streamDevin(model: Model<Api>, context: Context, options?: Simpl
 
 			endText(stream, output, textBlock);
 			endThinking(stream, output, thinkingBlock);
+			if (process.env.NS_PI_DEBUG_TOOLS) {
+				const { appendFileSync } = await import("node:fs");
+				appendFileSync("/tmp/ns-pi-debug-tools.log", JSON.stringify({
+					t: Date.now(), phase: "assembled",
+					tools: [...tools.values()].map(tool => ({ id: tool.id, name: tool.name, arguments: tool.arguments })),
+					stopReason, currentToolId,
+				}) + "\n");
+			}
 			for (const tool of tools.values()) stream.push({ type: "toolcall_end", contentIndex: output.content.indexOf(tool), toolCall: tool, partial: output });
-			output.stopReason = tools.size ? "toolUse" : stopReason === 1 || stopReason === 3 ? "length" : "stop";
+			// stop reason 10 = tool_calls (Windsurf/Devin); also treat any assembled tools as toolUse
+			output.stopReason = tools.size || stopReason === 10 ? "toolUse" : stopReason === 1 || stopReason === 3 ? "length" : "stop";
 			calculateCost(model, output.usage);
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
