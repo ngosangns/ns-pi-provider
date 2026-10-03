@@ -12,7 +12,7 @@
     "noEmit": true,
     "types": ["node"],
     "rootDir": ".",
-    "allowImportingTsExtensions": false,
+    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false,
     "noUnusedLocals": false,
     "noUnusedParameters": false,

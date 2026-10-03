@@ -1,3 +1,8 @@
+## 0.1.6
+
+- fix(devin): retry serving-model capacity pressure — trailer-only "capacity issues" errors and HTTP 503 before any emitted content now retry with exponential backoff (5s → 10s → 20s, max 3) instead of failing the stream outright; mid-stream capacity trailers still surface as errors to avoid replaying emitted deltas.
+- chore: enable `allowImportingTsExtensions` so `npm run typecheck` covers the `.ts`-extension imports used across src/tests (unblocks `prepublishOnly`).
+
 ## 0.1.5
 
 - fix(devin): read tools/system prompt via `getCurrentTools` / `getCurrentSystemPrompt` after Pi `normalizeContext` (tools live on system `toolsAdded`, so `context.tools` was always empty under RPC).
