@@ -26,7 +26,7 @@ import type {
   ToolCall,
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import { calculateCost, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { calculateCost, createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { log, previewChunk } from "./debug.ts";
 import { parseKiroEvents } from "./event-parser.ts";
 import type { KiroModel } from "./models.ts";
@@ -258,6 +258,11 @@ export function streamKiro(
       // "reasoning hidden" marker via the standard pi-ai contract.
       const reasoningHidden = !!(model as KiroModel).reasoningHidden;
 
+      // Transcript protocol: tools/systemPrompt arrive on system messages after
+      // pi's normalizeContext(); fall back to them when context.* is empty.
+      const requestTools = context.tools?.length ? context.tools : getCurrentTools(context.messages);
+      let systemPrompt = context.systemPrompt || getCurrentSystemPrompt(context.messages);
+
       log.debug("request.init", {
         endpoint,
         model: model.id,
@@ -267,12 +272,10 @@ export function streamKiro(
         reasoningHidden,
         reasoning: options?.reasoning,
         messageCount: context.messages.length,
-        toolCount: context.tools?.length ?? 0,
-        hasSystemPrompt: !!context.systemPrompt,
+        toolCount: requestTools.length,
+        hasSystemPrompt: !!systemPrompt,
         sessionId: options?.sessionId,
       });
-
-      let systemPrompt = context.systemPrompt ?? "";
       // Skip the `<thinking_mode>` directive when the provider hides
       // reasoning — the directive is a no-op there and costs prompt tokens.
       if (thinkingEnabled && !reasoningHidden) {
@@ -400,11 +403,11 @@ export function streamKiro(
         }
 
         let uimc: { toolResults?: KiroToolResult[]; tools?: KiroToolSpec[] } | undefined;
-        if (currentToolResults.length > 0 || (context.tools && context.tools.length > 0)) {
+        if (currentToolResults.length > 0 || requestTools.length > 0) {
           uimc = {};
           if (currentToolResults.length > 0) uimc.toolResults = currentToolResults;
-          if (context.tools?.length) {
-            uimc.tools = convertToolsToKiro(context.tools);
+          if (requestTools.length) {
+            uimc.tools = convertToolsToKiro(requestTools);
           }
         }
 

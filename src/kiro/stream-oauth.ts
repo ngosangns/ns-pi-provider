@@ -4,6 +4,8 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   calculateCost,
   createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getCurrentTools,
   type Api,
   type AssistantMessage,
   type AssistantMessageEventStream,
@@ -252,7 +254,9 @@ function makeUserMessage(content: string, modelId: string, context?: KiroUserInp
 
 function convertMessages(context: Context, modelId: string): { history: KiroConversationMessage[]; currentMessage: KiroUserInputMessage } {
   const history: KiroConversationMessage[] = [];
-  const tools = buildKiroTools(context.tools);
+  // After pi's normalizeContext(), tools live on system messages (toolsAdded),
+  // not context.tools — replay the transcript to get the effective tool set.
+  const tools = buildKiroTools(context.tools?.length ? context.tools : getCurrentTools(context.messages));
   let pendingUserContent: string[] = [];
   let pendingToolResults: KiroToolResult[] = [];
   let currentRole: "user" | "assistant" | null = null;
@@ -275,6 +279,7 @@ function convertMessages(context: Context, modelId: string): { history: KiroConv
   };
 
   for (const message of context.messages) {
+    if (message.role === "system") continue;
     if (message.role === "user") {
       const userContent = textFromContent(message.content, { pruneKiroCliScaffolding: true });
       if (!userContent) {
@@ -353,7 +358,9 @@ function uuidFromHash(value: string): string {
 }
 
 function buildSystemPrefix(context: Context): string {
-  const systemPrompt = typeof context.systemPrompt === "string" ? context.systemPrompt.trim() : "";
+  // Transcript protocol: the system prompt is carried by system messages;
+  // context.systemPrompt only exists on pre-normalization Context objects.
+  const systemPrompt = (context.systemPrompt || getCurrentSystemPrompt(context.messages)).trim();
   if (!systemPrompt || isKiroCliDefaultAgentInstruction(systemPrompt)) return "";
   return `<Pi system instructions>\n${systemPrompt}\n</Pi system instructions>`;
 }

@@ -1,5 +1,6 @@
 // @ts-nocheck — vendored upstream; adapted under MIT (see NOTICE)
 import type { Context } from "@earendil-works/pi-ai/compat";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 
 function contentToText(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -27,8 +28,11 @@ function contentToText(content: unknown): string {
  */
 export function buildFullPrompt(context: Context): string {
 	const parts: string[] = [];
-	if (context.systemPrompt?.trim()) {
-		parts.push(`system:\n${context.systemPrompt.trim()}`);
+	// Transcript protocol: the system prompt lives on system messages after
+	// pi's normalizeContext(); context.systemPrompt is only set pre-normalization.
+	const systemPrompt = context.systemPrompt?.trim() || getCurrentSystemPrompt(context.messages).trim();
+	if (systemPrompt) {
+		parts.push(`system:\n${systemPrompt}`);
 	}
 	for (const message of context.messages) {
 		if (message.role === "user") {
@@ -82,10 +86,15 @@ export function buildIncrementalPrompt(context: Context): string {
 export function contextHistoryFingerprint(context: Context): string {
 	// Hash-ish string of roles + lengths + last assistant snippet; cheap stability check.
 	const parts: string[] = [];
-	if (context.systemPrompt) parts.push(`sys:${context.systemPrompt.length}`);
+	const systemPrompt = context.systemPrompt || getCurrentSystemPrompt(context.messages);
+	if (systemPrompt) parts.push(`sys:${systemPrompt.length}`);
 	for (const m of context.messages) {
 		const text = contentToText(m.content);
-		parts.push(`${m.role}:${text.length}:${text.slice(0, 64)}`);
+		const toolDelta =
+			m.role === "system"
+				? `+${(m.toolsAdded ?? []).map((t: { name?: string }) => t.name ?? "?").join(",")}:-${(m.toolsRemoved ?? []).map((t: { name?: string }) => t.name ?? "?").join(",")}`
+				: "";
+		parts.push(`${m.role}:${text.length}:${text.slice(0, 64)}${toolDelta}`);
 	}
 	return parts.join("|");
 }

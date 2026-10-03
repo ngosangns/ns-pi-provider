@@ -126,6 +126,14 @@ export class AcpJsonRpcClient {
 			return;
 		}
 
+		// Agent → client request: must always get a response, otherwise the
+		// agent blocks on it forever (e.g. _x.ai/ask_user_question during a
+		// headless run deadlocked session/prompt indefinitely).
+		if (message.method !== undefined && message.id !== undefined && message.id !== null) {
+			this.respondToAgentRequest(message);
+			return;
+		}
+
 		if (typeof message.id === "number" && this.pending.has(message.id)) {
 			const pending = this.pending.get(message.id)!;
 			this.pending.delete(message.id);
@@ -145,6 +153,35 @@ export class AcpJsonRpcClient {
 			} catch {
 				// ignore listener errors
 			}
+		}
+	}
+
+	/**
+	 * Answer requests the agent makes to the client. Interactive requests are
+	 * resolved non-interactively so headless sessions never wait on a human:
+	 * permissions pick an allow option (matches --always-approve), questions are
+	 * cancelled, and anything unknown gets a JSON-RPC method-not-found error.
+	 */
+	private respondToAgentRequest(message: JsonRpcMessage): void {
+		let payload: { result?: unknown; error?: { code: number; message: string } };
+		if (message.method === "session/request_permission") {
+			const params = (message.params ?? {}) as { options?: Array<{ optionId?: string; kind?: string }> };
+			const options = Array.isArray(params.options) ? params.options : [];
+			const allow = options.find((o) => o.kind === "allow_once" || o.kind === "allow_always") ?? options[0];
+			payload = allow?.optionId
+				? { result: { outcome: { outcome: "selected", optionId: allow.optionId } } }
+				: { result: { outcome: { outcome: "cancelled" } } };
+		} else if (message.method === "_x.ai/ask_user_question") {
+			payload = { result: { cancelled: true } };
+		} else {
+			payload = {
+				error: { code: -32601, message: `Client does not handle agent request "${message.method}"` },
+			};
+		}
+		try {
+			this.proc.stdin?.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, ...payload })}\n`);
+		} catch {
+			// ignore write errors on a dying process
 		}
 	}
 

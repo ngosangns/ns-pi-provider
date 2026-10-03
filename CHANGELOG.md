@@ -1,3 +1,9 @@
+## 0.1.7
+
+- fix(kiro): read tools/system prompt via `getCurrentTools` / `getCurrentSystemPrompt` after Pi `normalizeContext` — `context.tools`/`context.systemPrompt` are empty once the transcript protocol folds them into a leading system message, so Kiro requests went out with zero tools and no system prompt (models answered in plain text and hallucinated command output). Same root cause as the devin fix in 0.1.5.
+- fix(grok): answer agent→client JSON-RPC requests — `_x.ai/ask_user_question` gets `{cancelled:true}`, `session/request_permission` auto-selects an `allow_*` option (matches `--always-approve`), unknown methods get `-32601`. Previously unanswered requests blocked the agent forever (`pi auth check`/headless hangs).
+- fix(grok): resolve the system prompt from transcript system messages in prompt building and history fingerprints (same transcript-protocol drop).
+
 ## 0.1.6
 
 - fix(devin): retry serving-model capacity pressure — trailer-only "capacity issues" errors and HTTP 503 before any emitted content now retry with exponential backoff (5s → 10s → 20s, max 3) instead of failing the stream outright; mid-stream capacity trailers still surface as errors to avoid replaying emitted deltas.
