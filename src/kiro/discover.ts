@@ -1,19 +1,39 @@
 // @ts-nocheck — vendored upstream; adapted under MIT (see NOTICE)
 // Dynamic model discovery against Kiro's ListAvailableModels operation.
 //
-// The model catalog in models.ts is a static snapshot; it cannot reflect
-// models scoped to a specific org or entitlement. This module asks the API
-// what *this* key can actually reach and builds the provider's model list
-// from the response.
+// The provider keeps no static model catalog: this module asks the API what
+// *this* key can actually reach and builds the model list from the response,
+// so the offered set always matches the org's region and entitlement.
 //
 // Discovery is authoritative: if the call fails we surface the error rather
-// than silently falling back to the static catalog. A stale fallback would
+// than silently falling back to a static catalog. A stale fallback would
 // both offer models the org cannot use and hide ones it can, which is the
 // exact failure mode dynamic discovery exists to prevent.
 
 import { log } from "./debug.ts";
-import { KIRO_ORIGIN } from "./transform.ts";
-import { kiroModels, setDiscoveredModelIds, type KiroModel } from "./models.ts";
+import { defaultThinkingLevelMapForModel, type ThinkingLevelMap } from "./config.ts";
+
+/**
+ * `origin` filters ListAvailableModels server-side and must match what the
+ * stream path sends on GenerateAssistantResponse, or we would advertise
+ * models the chat path cannot actually use.
+ */
+const KIRO_ORIGIN = "AI_EDITOR";
+
+/** A discovered Kiro model in pi's dash-form ID convention. */
+export interface KiroModel {
+  id: string;
+  name: string;
+  api: "kiro-api";
+  provider: "kiro";
+  baseUrl: string;
+  reasoning: boolean;
+  input: ("text" | "image")[];
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  contextWindow: number;
+  maxTokens: number;
+  thinkingLevelMap?: ThinkingLevelMap;
+}
 
 /**
  * Note the service prefix: the list operation lives on
@@ -46,32 +66,6 @@ function buildUserAgent(): string {
   return `aws-sdk-rust/1.0.0 ua/2.1 os/other lang/rust api/codewhispererstreaming#1.28.3 m/E app/AmazonQ-For-CLI md/appVersion-1.28.3-${mid}`;
 }
 
-/**
- * Static per-model behavior flags the API does not report. Keyed by Kiro's
- * dot-form ID. `reasoningHidden` and `firstTokenTimeout` are client-side
- * concerns discovered empirically, so they stay hand-maintained and are
- * merged onto whatever the API returns.
- */
-const BEHAVIOR_BY_KIRO_ID: Record<string, Partial<KiroModel>> = Object.fromEntries(
-  kiroModels.map((m) => [
-    m.id.replace(/(\d)-(\d)/g, "$1.$2"),
-    {
-      ...(m.reasoningHidden ? { reasoningHidden: true } : {}),
-      ...(m.firstTokenTimeout ? { firstTokenTimeout: m.firstTokenTimeout } : {}),
-    },
-  ]),
-);
-
-/**
- * Long-context variants are a client-side convention: the API advertises
- * e.g. `claude-sonnet-4.6` but also accepts `claude-sonnet-4.6-1m`, which
- * the list response never mentions. Derive them from the static catalog so
- * they remain selectable, but only when the API confirmed the base model —
- * that keeps the org-scoping guarantee intact.
- */
-const ONE_M_SUFFIX = "-1m";
-const ONE_M_CONTEXT = 1_000_000;
-
 /** Convert a Kiro dot-form ID to pi's dash form (4.6 → 4-6). */
 function toPiId(kiroId: string): string {
   return kiroId.replace(/(\d)\.(\d)/g, "$1-$2");
@@ -79,6 +73,7 @@ function toPiId(kiroId: string): string {
 
 function toKiroModel(api: ApiModel, baseUrl: string): KiroModel {
   const piId = toPiId(api.modelId);
+  const thinkingLevelMap = defaultThinkingLevelMapForModel(piId, api.modelName ?? piId);
   const types = api.supportedInputTypes ?? ["TEXT"];
   const input: ("text" | "image")[] = types.some((t) => t.toUpperCase() === "IMAGE")
     ? ["text", "image"]
@@ -91,43 +86,17 @@ function toKiroModel(api: ApiModel, baseUrl: string): KiroModel {
     provider: "kiro",
     baseUrl,
     // The API reports no reasoning capability flag. Treat every model as
-    // reasoning-capable: stream.ts gates the `<thinking_mode>` directive on
-    // this, and an unnecessary directive is far cheaper than suppressing
-    // reasoning on a model that supports it.
+    // reasoning-capable: an over-eager `reasoning` flag is far cheaper than
+    // suppressing reasoning on a model that supports it.
     reasoning: true,
     input,
     // Kiro bills in credits via rateMultiplier, not per-token USD. There is
-    // no token price to report, so cost stays zero and the multiplier is
-    // surfaced in the model name instead.
+    // no token price to report, so cost stays zero.
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: api.tokenLimits?.maxInputTokens ?? 200_000,
     maxTokens: api.tokenLimits?.maxOutputTokens ?? 8_192,
-    ...BEHAVIOR_BY_KIRO_ID[api.modelId],
+    ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
   };
-}
-
-/** Build the `-1m` companions for base models the API confirmed. */
-function deriveLongContextVariants(discovered: KiroModel[], baseUrl: string): KiroModel[] {
-  const present = new Set(discovered.map((m) => m.id));
-  const out: KiroModel[] = [];
-
-  for (const staticModel of kiroModels) {
-    if (!staticModel.id.endsWith(ONE_M_SUFFIX)) continue;
-    if (present.has(staticModel.id)) continue;
-
-    const baseId = staticModel.id.slice(0, -ONE_M_SUFFIX.length);
-    const base = discovered.find((m) => m.id === baseId);
-    if (!base) continue;
-
-    out.push({
-      ...base,
-      id: staticModel.id,
-      name: `${base.name} (1M)`,
-      contextWindow: ONE_M_CONTEXT,
-      ...BEHAVIOR_BY_KIRO_ID[staticModel.id.replace(/(\d)-(\d)/g, "$1.$2")],
-    });
-  }
-  return out;
 }
 
 /**
@@ -205,20 +174,13 @@ export async function discoverKiroModels(
     );
   }
 
-  const discovered = apiModels
+  const models = apiModels
     .filter((m) => typeof m.modelId === "string" && m.modelId.length > 0)
     .map((m) => toKiroModel(m, baseUrl));
 
-  const models = [...discovered, ...deriveLongContextVariants(discovered, baseUrl)];
-
-  // Gate outbound requests on what discovery actually returned, so a model
-  // this key cannot reach fails fast client-side instead of round-tripping.
-  setDiscoveredModelIds(models.map((m) => m.id.replace(/(\d)-(\d)/g, "$1.$2")));
-
   log.info("discover.ok", {
     count: models.length,
-    discovered: discovered.map((m) => m.id),
-    derived: models.length - discovered.length,
+    discovered: models.map((m) => m.id),
     defaultModel: payload.defaultModel?.modelId,
   });
 

@@ -75,35 +75,24 @@ export interface ConfigLoadResult {
 type RawModel = Record<string, unknown>;
 
 const KIRO_MAX_OUTPUT_TOKENS = 32_000;
-const KIRO_PROMPT_CACHING_1024 = { supportsPromptCaching: true, maximumCacheCheckpointsPerRequest: 4, minimumTokensPerCacheCheckpoint: 1_024 } satisfies KiroPromptCachingConfig;
-const KIRO_PROMPT_CACHING_4096 = { supportsPromptCaching: true, maximumCacheCheckpointsPerRequest: 4, minimumTokensPerCacheCheckpoint: 4_096 } satisfies KiroPromptCachingConfig;
-const KIRO_PROMPT_CACHING_DISABLED = { supportsPromptCaching: false } satisfies KiroPromptCachingConfig;
 const ANTHROPIC_REASONING_MAP = { off: "disabled", minimal: "low", low: "low", medium: "medium", high: "high", xhigh: null } satisfies ThinkingLevelMap;
 const ANTHROPIC_OPUS_4_7_REASONING_MAP = { ...ANTHROPIC_REASONING_MAP, xhigh: "xhigh" } satisfies ThinkingLevelMap;
 const ANTHROPIC_MAX_REASONING_MAP = { ...ANTHROPIC_REASONING_MAP, xhigh: "max" } satisfies ThinkingLevelMap;
 
-function defaultThinkingLevelMapForModel(id: string, name: string): ThinkingLevelMap | undefined {
+/**
+ * Client-side heuristic for thinking-level support the API does not report.
+ * Regex on id/name — not a model list; unknown ids simply get no map.
+ */
+export function defaultThinkingLevelMapForModel(id: string, name: string): ThinkingLevelMap | undefined {
   const identity = `${id} ${name}`.toLowerCase();
   if (/claude[-\s_/]*opus[-\s_/]*4[.-]?7\b/.test(identity)) return { ...ANTHROPIC_OPUS_4_7_REASONING_MAP };
   if (/claude[-\s_/]*(?:opus|sonnet)[-\s_/]*4[.-]?6\b/.test(identity)) return { ...ANTHROPIC_MAX_REASONING_MAP };
   return undefined;
 }
 
-const DEFAULT_MODELS: RawModel[] = [
-  { id: "auto", name: "Auto", reasoning: true, contextWindow: 1_000_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 1.0, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_1024, importOwnership: "model-discovery" },
-  { id: "claude-opus-4.7", name: "Claude Opus 4.7", reasoning: true, thinkingLevelMap: ANTHROPIC_OPUS_4_7_REASONING_MAP, contextWindow: 1_000_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 2.2, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_4096, importOwnership: "model-discovery" },
-  { id: "claude-opus-4.6", name: "Claude Opus 4.6", reasoning: true, thinkingLevelMap: ANTHROPIC_MAX_REASONING_MAP, contextWindow: 1_000_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 2.2, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_4096, importOwnership: "model-discovery" },
-  { id: "claude-sonnet-4.6", name: "Claude Sonnet 4.6", reasoning: true, thinkingLevelMap: ANTHROPIC_MAX_REASONING_MAP, contextWindow: 1_000_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 1.3, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_1024, importOwnership: "model-discovery" },
-  { id: "claude-opus-4.5", name: "Claude Opus 4.5", reasoning: true, contextWindow: 200_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 2.2, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_4096, importOwnership: "model-discovery" },
-  { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 1.3, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_1024, importOwnership: "model-discovery" },
-  { id: "claude-sonnet-4", name: "Claude Sonnet 4", reasoning: true, contextWindow: 200_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 1.3, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_1024, importOwnership: "model-discovery" },
-  { id: "claude-haiku-4.5", name: "Claude Haiku 4.5", reasoning: true, contextWindow: 200_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 0.4, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_4096, importOwnership: "model-discovery" },
-  { id: "deepseek-3.2", name: "DeepSeek 3.2", reasoning: true, contextWindow: 164_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 0.25, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_DISABLED, importOwnership: "model-discovery" },
-  { id: "minimax-m2.5", name: "MiniMax M2.5", reasoning: true, contextWindow: 196_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 0.25, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_DISABLED, importOwnership: "model-discovery" },
-  { id: "minimax-m2.1", name: "MiniMax M2.1", reasoning: true, contextWindow: 196_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 0.15, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_DISABLED, importOwnership: "model-discovery" },
-  { id: "glm-5", name: "GLM-5", reasoning: true, contextWindow: 200_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 0.5, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_DISABLED, importOwnership: "model-discovery" },
-  { id: "qwen3-coder-next", name: "Qwen3 Coder Next", reasoning: true, contextWindow: 256_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 0.05, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_DISABLED, importOwnership: "model-discovery" },
-];
+// No package-shipped model catalog: ListAvailableModels is authoritative and
+// scoped to the caller's region/org/entitlement. config.json `models` remains
+// a user override (e.g. custom upstreams), not a shipped list.
 
 const DEFAULT_MODEL_DEFAULTS = {
   reasoning: true,
@@ -339,12 +328,9 @@ export function loadConfig(extensionRoot: string): ConfigLoadResult {
   const warnings: string[] = [];
   const raw = readRawConfig(extensionRoot, warnings);
   const defaults = modelDefaultsFrom(raw, warnings);
-  const models = normalizeModelList(Array.isArray(raw.models) ? raw.models : DEFAULT_MODELS, defaults, warnings);
-
-  if (models.length === 0) {
-    warnings.push("No valid models were configured; using the default Kiro model list.");
-    models.push(...normalizeModelList(DEFAULT_MODELS, defaults, warnings));
-  }
+  // User-configured models only — the shipped catalog comes from
+  // ListAvailableModels at registration/refresh time.
+  const models = normalizeModelList(Array.isArray(raw.models) ? raw.models : [], defaults, warnings);
 
   const upstreamUrl = stringOr(raw.upstreamUrl, "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse");
   return {

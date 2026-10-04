@@ -1,7 +1,10 @@
 ## 0.1.8
 
 - fix(kiro): convert wire `modelId` to Kiro's dot form — discovery returns pi dash-form IDs (`claude-sonnet-4-5`) but `GenerateAssistantResponse` requires dot form (`claude-sonnet-4.5`), so every discovered model failed with `INVALID_MODEL_ID` on stream.
-- fix(kiro): drop stale `claude-sonnet-4.5-1m` from the static catalog — the service rejects it (`INVALID_MODEL_ID`); discovery no longer derives it.
+- refactor(kiro): drop the package-shipped model catalog — `ListAvailableModels` is now the sole catalog source (scoped to the key's region/org/entitlement), so the offered set can no longer drift stale. `config.json` `models` remains a user override for custom upstreams; derived `-1m` variants are no longer offered since the API does not advertise them.
+- feat(kiro): await model discovery before first `registerProvider` so `--list-models` / headless `-p` see the full catalog without a `session_start` (same pattern as devin).
+- feat(kiro): carry `thinkingLevelMap` through discovered models (opus 4.6/4.7 thinking levels incl. `xhigh`) via a client-side name heuristic — the API does not report it.
+- chore(kiro): remove vendored dead code (`stream.ts` + `tokenizer.ts`/`thinking-parser.ts`/`event-parser.ts`/`transform.ts`/`models.ts`) that pinned the static catalog and was never wired into the provider.
 - test(kiro): add live per-model probe (`tests/live/kiro-models.test.ts`) streaming a minimal request through every discovered model; opt-in via `NS_PI_LIVE=1`, `NS_PI_MODEL_FILTER`, `NS_PI_MODEL_TIMEOUT_MS`.
 
 ## 0.1.7

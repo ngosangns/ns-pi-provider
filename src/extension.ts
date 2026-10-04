@@ -27,7 +27,7 @@ export async function registerAllProviders(
 
   if (enableKiro) {
     try {
-      registerKiroProvider(pi);
+      await registerKiroProvider(pi);
     } catch (err) {
       console.warn(
         `[ns-pi-provider] kiro registration failed: ${err instanceof Error ? err.message : String(err)}`,

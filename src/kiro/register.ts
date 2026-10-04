@@ -302,8 +302,9 @@ export async function refreshKiroModels(options: {
           cost: ensureCacheCost(m.cost),
           contextWindow: m.contextWindow,
           maxTokens: m.maxTokens,
+          ...(m.thinkingLevelMap ? { thinkingLevelMap: m.thinkingLevelMap } : {}),
         }));
-        return { models, version: "kiro-list-v1" };
+        return { models, version: "kiro-list-v2" };
       },
       { force: options.force },
     );
@@ -315,7 +316,7 @@ export async function refreshKiroModels(options: {
   }
 }
 
-export function registerKiroProvider(pi: ExtensionAPI): void {
+export async function registerKiroProvider(pi: ExtensionAPI): Promise<void> {
   const { config, warnings } = loadConfig(EXTENSION_ROOT);
   const logger = new DebugLogger({ extensionRoot: EXTENSION_ROOT, debug: config.debug });
   for (const warning of warnings) logger.warn("config_warning", { warning });
@@ -353,7 +354,16 @@ export function registerKiroProvider(pi: ExtensionAPI): void {
   const runtime: { cwd?: string } = {};
   const streamSimple = createLazyKiroStream(config, runtime, logger);
   const providerHeaders = omitAuthorizationHeaders(config.headers);
-  let currentModels = toProviderModels(fallbackCatalogModels(config), config);
+
+  // Await discovery before the first registerProvider so `--list-models` and
+  // headless `-p` see the full catalog without waiting for session_start
+  // (same pattern as the devin provider). Falls back to the disk cache, then
+  // to user-configured models, then to an empty list when no credential
+  // resolves — a static shipped list would only drift out of sync.
+  let currentModels = toProviderModels(
+    (await refreshKiroModels({ fallback: fallbackCatalogModels(config) })).models,
+    config,
+  );
 
   const buildConfig = (models: typeof currentModels) => ({
     name: config.displayName || "Kiro",
