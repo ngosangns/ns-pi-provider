@@ -424,9 +424,14 @@ function omitInternalKiroHeaders(headers: ProviderHeaders | undefined): Record<s
 }
 
 function buildRequest(model: Model<Api>, context: Context, config: ExtensionConfig, options?: SimpleStreamOptions): KiroRequest {
-  const { history, currentMessage } = convertMessages(context, model.id);
+  // Discovered catalog IDs use pi's dash form ("claude-sonnet-4-5"); the wire
+  // protocol requires Kiro's dot form ("claude-sonnet-4.5"). Convert here —
+  // digit-dash-digit only, so suffixes like "-1m" and ids like "auto" pass
+  // through unchanged.
+  const wireModelId = model.id.replace(/(\d)-(\d)/g, "$1.$2");
+  const { history, currentMessage } = convertMessages(context, wireModelId);
   const firstContent = firstUserConversationContent(history, currentMessage);
-  prependSystemInstructionHistory(history, buildSystemPrefix(context), model.id);
+  prependSystemInstructionHistory(history, buildSystemPrefix(context), wireModelId);
   const amazonQEndpoint = isAmazonQEndpoint(config);
   if (amazonQEndpoint) setUserMessageOrigin(history, currentMessage, "KIRO_CLI");
   const profileArn = getHeaderCaseInsensitive(options?.headers, KIRO_PROFILE_ARN_HEADER) ?? config.profileArn;

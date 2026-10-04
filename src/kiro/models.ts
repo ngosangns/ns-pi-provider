@@ -24,7 +24,6 @@ export const KIRO_MODEL_IDS = new Set<string>([
   "claude-sonnet-4.6-1m",
   "claude-opus-4.5",
   "claude-sonnet-4.5",
-  "claude-sonnet-4.5-1m",
   "claude-sonnet-4",
   "claude-haiku-4.5",
   "deepseek-3.2",
@@ -182,15 +181,6 @@ export const kiroModels: KiroModel[] = [
     reasoning: true,
     input: MULTIMODAL,
     contextWindow: 200_000,
-    maxTokens: 65_536,
-  },
-  {
-    ...KIRO_DEFAULTS,
-    id: "claude-sonnet-4-5-1m",
-    name: "Claude Sonnet 4.5 (1M)",
-    reasoning: true,
-    input: MULTIMODAL,
-    contextWindow: 1_000_000,
     maxTokens: 65_536,
   },
   {

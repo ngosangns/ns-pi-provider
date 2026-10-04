@@ -1,3 +1,9 @@
+## 0.1.8
+
+- fix(kiro): convert wire `modelId` to Kiro's dot form — discovery returns pi dash-form IDs (`claude-sonnet-4-5`) but `GenerateAssistantResponse` requires dot form (`claude-sonnet-4.5`), so every discovered model failed with `INVALID_MODEL_ID` on stream.
+- fix(kiro): drop stale `claude-sonnet-4.5-1m` from the static catalog — the service rejects it (`INVALID_MODEL_ID`); discovery no longer derives it.
+- test(kiro): add live per-model probe (`tests/live/kiro-models.test.ts`) streaming a minimal request through every discovered model; opt-in via `NS_PI_LIVE=1`, `NS_PI_MODEL_FILTER`, `NS_PI_MODEL_TIMEOUT_MS`.
+
 ## 0.1.7
 
 - fix(kiro): read tools/system prompt via `getCurrentTools` / `getCurrentSystemPrompt` after Pi `normalizeContext` — `context.tools`/`context.systemPrompt` are empty once the transcript protocol folds them into a leading system message, so Kiro requests went out with zero tools and no system prompt (models answered in plain text and hallucinated command output). Same root cause as the devin fix in 0.1.5.
