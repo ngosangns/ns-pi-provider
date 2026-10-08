@@ -1,6 +1,24 @@
 // @ts-nocheck — vendored upstream; adapted under MIT (see NOTICE)
 import type { Context } from "@earendil-works/pi-ai/compat";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
+import { envFlagDefault } from "./config.js";
+
+/**
+ * Prepended on cold starts. The host's system prompt describes the host's own
+ * tools (read/bash/edit/write, OMP hashline edit, …) which the Grok ACP agent
+ * cannot call; without this Grok may describe or "plan" host tool calls in
+ * text instead of acting with its built-in tools.
+ */
+export const GROK_BRIDGE_NOTE = [
+	"[grok bridge] You are the Grok coding agent, running behind an external coding harness that only relays your messages.",
+	"Tools named in the harness instructions below (read, bash, edit, write, …) are not callable from here.",
+	"Use your own built-in tools (read_file, grep, search_replace, write, run_terminal_command, …) directly in the working directory.",
+	"When the task needs file changes or commands, perform them with those tools instead of describing them or writing tool calls as text.",
+].join("\n");
+
+function bridgeNoteEnabled(): boolean {
+	return envFlagDefault(["PI_GROK_SDK_BRIDGE_NOTE"], true);
+}
 
 function contentToText(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -44,6 +62,7 @@ export function buildFullPrompt(context: Context): string {
 			parts.push(`tool result (${name}):\n${contentToText(message.content)}`);
 		}
 	}
+	if (parts.length > 0 && bridgeNoteEnabled()) parts.unshift(GROK_BRIDGE_NOTE);
 	return parts.join("\n\n");
 }
 

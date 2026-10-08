@@ -96,6 +96,8 @@ export class PiContentEmitter {
 	private started = false;
 	private thinkingContentIndex = -1;
 	private textContentIndex = -1;
+	/** Last visible text appended was a tool-activity list line. */
+	private lastTextWasTool = false;
 	private readonly mutuallyExclusive: boolean;
 
 	constructor(
@@ -151,6 +153,7 @@ export class PiContentEmitter {
 		const contentIndex = this.textContentIndex;
 		const block = this.partial.content[contentIndex];
 		this.textContentIndex = -1;
+		this.lastTextWasTool = false;
 		if (block?.type !== "text") return "";
 		this.push({
 			type: "text_end",
@@ -194,6 +197,34 @@ export class PiContentEmitter {
 
 	appendText(delta: string, options?: { closeThinking?: boolean }): void {
 		if (!delta) return;
+		if (this.lastTextWasTool && this.textContentIndex >= 0) {
+			// Blank line so prose after a tool list is not folded into its last item.
+			this.lastTextWasTool = false;
+			const open = this.partial.content[this.textContentIndex];
+			if (open?.type === "text" && !open.text.endsWith("\n\n")) {
+				delta = `${open.text.endsWith("\n") ? "\n" : "\n\n"}${delta}`;
+			}
+		}
+		this.lastTextWasTool = false;
+		this.appendTextRaw(delta, options);
+	}
+
+	/**
+	 * Visible tool-activity line(s) ("- Edit `a.ts` (+1 −1)\n") in the answer
+	 * text, separated from surrounding prose so Markdown renders them as a list.
+	 */
+	appendToolActivity(lines: string, options?: { closeThinking?: boolean }): void {
+		if (!lines) return;
+		let delta = lines.endsWith("\n") ? lines : `${lines}\n`;
+		const open = this.textContentIndex >= 0 ? this.partial.content[this.textContentIndex] : undefined;
+		if (!this.lastTextWasTool && open?.type === "text" && open.text && !open.text.endsWith("\n\n")) {
+			delta = `${open.text.endsWith("\n") ? "\n" : "\n\n"}${delta}`;
+		}
+		this.appendTextRaw(delta, options);
+		this.lastTextWasTool = true;
+	}
+
+	private appendTextRaw(delta: string, options?: { closeThinking?: boolean }): void {
 		this.ensureStart();
 		if (options?.closeThinking ?? this.mutuallyExclusive) this.closeThinking();
 

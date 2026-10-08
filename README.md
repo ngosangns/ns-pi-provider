@@ -34,6 +34,16 @@ Then `/login kiro` or `/login devin` as needed. Grok uses the local `grok` CLI /
 | **devin** | OAuth (`/login devin`) + `credentials.toml` / env | `GetCliModelConfigs` → catalog cache | Devin cloud Connect protocol |
 | **grok** | Grok CLI / `~/.grok/auth.json` / `XAI_API_KEY` | `grok models` CLI → catalog cache | ACP or JSONL via local CLI |
 
+### Grok tool activity
+
+Grok runs as its own coding agent (the local `grok agent stdio` ACP process): it reads,
+edits, writes and runs commands itself with its built-in tools — Pi/OMP never execute
+them. Each of those tools is shown as one line in the reply (`` - Edit `src/a.ts` (+3 −1) ``,
+`` - Run `npm test` ``, failures as `✗ … failed`), so edits are visible. Set
+`PI_GROK_SDK_SHOW_TOOLS=0` to hide them. Cold-start prompts also carry a short bridge
+note telling Grok that the host's tool names are not callable and to act with its own
+tools (`PI_GROK_SDK_BRIDGE_NOTE=0` to drop it).
+
 Shared modules under `src/shared/` provide HTTP helpers, credential env resolution, and `CatalogCache` (TTL + optional ETag, in-memory + `~/.pi/agent/cache/ns-pi-provider`).
 
 Subpath exports (tree-shakeable):

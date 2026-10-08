@@ -1,3 +1,8 @@
+## 0.2.2
+
+- fix(grok): show the Grok agent's own tool activity in the reply. Grok (ACP mode) edits files and runs commands **inside its own process** and reports them only as ACP `tool_call` / `tool_call_update` notifications, which the provider dropped (only an opt-in `[grok tool: …]` note hidden in the collapsed thinking block). In Pi and OMP a turn therefore looked like read-only reasoning/speculation even when Grok had edited files, and long turns showed nothing for minutes. Each tool is now rendered as a visible Markdown list line in the answer text — `` - Read `a.ts` ``, `` - Edit `a.ts` (+1 −1) ``, `` - Write `NOTES.md` (+1 −0) ``, `` - Run `npm test` ``, with `✗ … failed: <first line>` on failure; paths are relative to the session cwd. They are text, never `toolCall` blocks, so the host never tries to re-run them. On by default; `PI_GROK_SDK_SHOW_TOOLS=0` hides them.
+- fix(grok): prefix cold-start prompts with a short bridge note — the host system prompt lists Pi/OMP tools (`read`/`bash`/`edit`/`write`, OMP hashline edit) that the Grok agent cannot call; the note tells Grok to act with its built-in tools (`read_file`, `search_replace`, `write`, `run_terminal_command`) rather than describing edits or writing tool calls as text. `PI_GROK_SDK_BRIDGE_NOTE=0` disables it.
+
 ## 0.2.1
 
 - fix(kiro): honour `metadataEvent` stop reasons (ported from ns-kiro-provider kiro-core `1e363bc` / upstream pi-provider-kiro #174). `MAX_TOKENS` now reports `length` even when a tool call parsed, so Pi/OMP agent loops refuse to run a cut-off tool call with partial arguments; `END_TURN`/`TOOL_USE` settle `stop`/`toolUse` as before.

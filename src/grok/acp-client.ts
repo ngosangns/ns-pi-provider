@@ -310,10 +310,14 @@ export async function promptAcpSession(
 		signal?: AbortSignal;
 		onUpdate?: (update: {
 			sessionUpdate?: string;
-			content?: { text?: string; type?: string };
+			// Message chunks carry `{ text }`; tool updates carry an array.
+			content?: { text?: string; type?: string } & Record<string, unknown>;
+			toolCallId?: string;
 			title?: string;
 			kind?: string;
 			status?: string;
+			rawInput?: Record<string, unknown>;
+			_meta?: Record<string, unknown>;
 		}) => void;
 	} = {},
 ): Promise<AcpPromptResult> {

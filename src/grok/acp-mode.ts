@@ -7,7 +7,7 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai/compat";
-import { envFlag, mapReasoningEffort } from "./config.js";
+import { envFlagDefault, mapReasoningEffort } from "./config.js";
 import {
 	applyAcpUsage,
 	emptyAssistantMessage,
@@ -19,6 +19,7 @@ import { resolveCliModelId } from "./models.js";
 import { buildFullPrompt, buildIncrementalPrompt, contextHistoryFingerprint } from "./prompt.js";
 import { getSessionCwd } from "./session-scope.js";
 import { promptAcpSession, withSessionAgent } from "./session-agent.js";
+import { ToolActivityTracker } from "./tool-activity.js";
 
 export function streamViaAcp(
 	model: Model<Api>,
@@ -55,8 +56,14 @@ export function streamViaAcp(
 
 			const reasoning = mapReasoningEffort(options?.reasoning);
 			const cwd = getSessionCwd();
-			const showTools =
-				envFlag("PI_GROK_SDK_SHOW_TOOLS") || envFlag("PI_GROK_AGENT_SHOW_TOOLS");
+			// Grok runs its own tools inside the ACP agent; the host never sees
+			// them unless we render them. On by default — without it every edit /
+			// command is invisible and the turn reads as read-only reasoning.
+			const showTools = envFlagDefault(
+				["PI_GROK_SDK_SHOW_TOOLS", "PI_GROK_AGENT_SHOW_TOOLS"],
+				true,
+			);
+			const tools = new ToolActivityTracker(cwd);
 			const cliModelId = resolveCliModelId(model.id);
 
 			// Live assistant row before first token (native pi feel).
@@ -95,9 +102,12 @@ export function streamViaAcp(
 								} else if (kind === "agent_message_chunk") {
 									// Closes thinking first → pi collapses reasoning, then streams answer.
 									emitter.appendText(piece);
-								} else if (showTools && kind === "tool_call") {
-									const label = update.title || update.kind || "tool";
-									emitter.noteActivity(`[grok tool: ${label}]`);
+								} else if (
+									showTools &&
+									(kind === "tool_call" || kind === "tool_call_update")
+								) {
+									const lines = tools.handle(update);
+									if (lines) emitter.appendToolActivity(lines);
 								}
 							});
 						},

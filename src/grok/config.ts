@@ -66,3 +66,21 @@ export function envFlag(name: string, env: NodeJS.ProcessEnv = process.env): boo
 	const v = env[name];
 	return v === "1" || v === "true" || v === "yes";
 }
+
+/**
+ * Tri-state env flag: "1/true/yes/on" → true, "0/false/no/off" → false,
+ * unset/other → `fallback`. First set name wins.
+ */
+export function envFlagDefault(
+	names: string[],
+	fallback: boolean,
+	env: NodeJS.ProcessEnv = process.env,
+): boolean {
+	for (const name of names) {
+		const raw = env[name]?.trim().toLowerCase();
+		if (!raw) continue;
+		if (raw === "1" || raw === "true" || raw === "yes" || raw === "on") return true;
+		if (raw === "0" || raw === "false" || raw === "no" || raw === "off") return false;
+	}
+	return fallback;
+}

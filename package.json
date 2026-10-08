@@ -1,6 +1,6 @@
 {
   "name": "@ngosangns/ns-pi-provider",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Unified Pi coding-agent providers for Kiro, Devin, and Grok — OAuth/CLI auth, streaming, and auto-updating model catalogs with disk TTL cache.",
   "type": "module",
   "license": "MIT",
