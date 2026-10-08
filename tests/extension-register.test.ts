@@ -38,7 +38,9 @@ describe("extension registration", () => {
     for (const id of ["kiro", "devin", "grok"] as const) {
       const cfg = providers.get(id) as { models: Array<{ cost: { cacheRead: number; cacheWrite: number } }> };
       expect(Array.isArray(cfg.models)).toBe(true);
-      expect(cfg.models.length).toBeGreaterThan(0);
+      // Kiro ships no static catalog (0.1.8): without a credential or a
+      // cached ListAvailableModels snapshot it registers with zero models.
+      if (id !== "kiro") expect(cfg.models.length).toBeGreaterThan(0);
       for (const m of cfg.models) {
         expect(m.cost).toHaveProperty("cacheRead");
         expect(m.cost).toHaveProperty("cacheWrite");
