@@ -1,5 +1,11 @@
 # @ngosangns/ns-pi-provider
 
+> [!IMPORTANT]
+> **This repository has moved to [ngosangns/ns-bridge](https://github.com/ngosangns/ns-bridge)**
+> (`packages/pi-provider`) and is archived here, read-only. Issues, pull requests and releases
+> happen there now. The npm package name is unchanged (`@ngosangns/ns-pi-provider`), so existing
+> installs keep working.
+
 Unified [Pi](https://pi.dev) coding-agent providers for **Kiro**, **Devin**, and **Grok**.
 
 - Provider ids: `kiro`, `devin`, `grok`
