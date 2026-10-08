@@ -5,6 +5,8 @@
 - feat(kiro): await model discovery before first `registerProvider` so `--list-models` / headless `-p` see the full catalog without a `session_start` (same pattern as devin).
 - feat(kiro): carry `thinkingLevelMap` through discovered models (opus 4.6/4.7 thinking levels incl. `xhigh`) via a client-side name heuristic — the API does not report it.
 - chore(kiro): remove vendored dead code (`stream.ts` + `tokenizer.ts`/`thinking-parser.ts`/`event-parser.ts`/`transform.ts`/`models.ts`) that pinned the static catalog and was never wired into the provider.
+- fix(grok): scope ACP agent disposal to the shutting-down session (port of upstream pi-grok-sdk `45fde95`) — `session_shutdown` now disposes only that session's pool entry (keyed by its session file/id) instead of every agent, `session_start` for another session no longer tears down the previous scope, and a single module-level `process.exit` hook replaces one per registration. Multi-session hosts sharing one Node process no longer kill other open chats' Grok agents.
+- test: extension registration accepts an empty kiro catalog when no credential or cached `ListAvailableModels` snapshot exists (hermetic CI no longer depends on `~/.pi` cache).
 - test(kiro): add live per-model probe (`tests/live/kiro-models.test.ts`) streaming a minimal request through every discovered model; opt-in via `NS_PI_LIVE=1`, `NS_PI_MODEL_FILTER`, `NS_PI_MODEL_TIMEOUT_MS`.
 
 ## 0.1.7
