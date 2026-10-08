@@ -36,16 +36,36 @@ const state = {
 
 let nextGeneration = 1;
 const scopeGenerations = new Map<string, number>([[ANONYMOUS_SCOPE, 0]]);
-let onScopeChange: ((previousKey: string) => void | Promise<void>) | undefined;
 
 export function getSessionCwd(): string {
 	return state.cwd;
 }
 
 export function getSessionScopeKey(): string {
-	if (state.sessionFile) return state.sessionFile;
-	if (state.sessionId) return `${EPHEMERAL_PREFIX}${state.sessionId}`;
+	return scopeKeyFrom(state.sessionFile, state.sessionId);
+}
+
+/** Derive pool key from session file / id (no global mutation). */
+export function scopeKeyFrom(
+	sessionFile?: string | null,
+	sessionId?: string | null,
+): string {
+	if (sessionFile) return sessionFile;
+	if (sessionId) return `${EPHEMERAL_PREFIX}${sessionId}`;
 	return ANONYMOUS_SCOPE;
+}
+
+/** Scope key from an extension handler context (session_start / session_shutdown). */
+export function scopeKeyFromCtx(ctx: {
+	sessionManager?: {
+		getSessionFile?: () => string | undefined | null;
+		getSessionId?: () => string | undefined | null;
+	};
+}): string {
+	return scopeKeyFrom(
+		ctx.sessionManager?.getSessionFile?.() ?? undefined,
+		ctx.sessionManager?.getSessionId?.() ?? undefined,
+	);
 }
 
 export function getSessionScopeGeneration(scopeKey: string = getSessionScopeKey()): number {
@@ -60,21 +80,16 @@ function setScope(cwd: string, sessionFile?: string, sessionId?: string): void {
 	scopeGenerations.set(getSessionScopeKey(), state.generation);
 }
 
-export function onSessionScopeKeyChange(handler: (previousKey: string) => void | Promise<void>): void {
-	onScopeChange = handler;
-}
-
 export function registerSessionScope(pi: SessionScopeApi): void {
+	// Point process-global cwd/scope at this runner's session. Does NOT dispose
+	// other scopes — multi-session hosts (pi-gui) keep one ACP pool entry per
+	// session file; only session_shutdown tears that entry down.
 	pi.on("session_start", async (_event, ctx) => {
-		const previousScopeKey = getSessionScopeKey();
 		setScope(
 			ctx.cwd,
 			ctx.sessionManager?.getSessionFile?.() ?? undefined,
 			ctx.sessionManager?.getSessionId?.() ?? undefined,
 		);
-		if (previousScopeKey !== getSessionScopeKey()) {
-			await onScopeChange?.(previousScopeKey);
-		}
 	});
 
 	// session_info_changed only updates name in current pi; keep handler for future fields.
@@ -92,5 +107,4 @@ export function resetSessionScopeForTests(): void {
 	nextGeneration = 1;
 	scopeGenerations.clear();
 	scopeGenerations.set(ANONYMOUS_SCOPE, 0);
-	onScopeChange = undefined;
 }

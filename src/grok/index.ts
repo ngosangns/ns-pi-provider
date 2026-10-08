@@ -11,12 +11,12 @@ import {
 } from "./config.js";
 import { discoverModels, toProviderModels } from "./models.js";
 import { streamGrokAgent } from "./provider.js";
-import {
-	onSessionScopeKeyChange,
-	registerSessionScope,
-} from "./session-scope.js";
+import { registerSessionScope, scopeKeyFromCtx } from "./session-scope.js";
 import { disposeAllSessionAgents, disposeSessionAgentsForScope } from "./session-agent.js";
 import type { GrokModelDescriptor } from "./types.js";
+
+/** One process-exit hook for the whole module (not per ExtensionAPI instance). */
+let exitHookInstalled = false;
 
 function createProviderConfig(models: ProviderModelConfig[]) {
 	return {
@@ -44,23 +44,22 @@ export default function (pi: ExtensionAPI) {
 	// Session scope first — other handlers may depend on cwd/scope key.
 	registerSessionScope(pi);
 
-	onSessionScopeKeyChange((previousKey) => {
-		disposeSessionAgentsForScope(previousKey);
+	// Tear down only this session's ACP pool entry. Multi-session hosts share
+	// one Node process; disposeAll here used to kill every open chat's agent.
+	pi.on("session_shutdown", async (_event, ctx) => {
+		disposeSessionAgentsForScope(scopeKeyFromCtx(ctx));
 	});
 
-	pi.on("session_shutdown", async () => {
-		disposeAllSessionAgents();
-	});
-
-	// Clean up agent subprocesses if the pi process exits.
-	const cleanup = () => {
-		try {
-			disposeAllSessionAgents();
-		} catch {
-			// ignore
-		}
-	};
-	process.once("exit", cleanup);
+	if (!exitHookInstalled) {
+		exitHookInstalled = true;
+		process.once("exit", () => {
+			try {
+				disposeAllSessionAgents();
+			} catch {
+				// ignore
+			}
+		});
+	}
 
 	let binary: string | undefined;
 	let binaryError: string | undefined;
