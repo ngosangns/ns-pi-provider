@@ -1,6 +1,6 @@
 {
   "name": "@ngosangns/ns-pi-provider",
-  "version": "0.1.8",
+  "version": "0.2.0",
   "description": "Unified Pi coding-agent providers for Kiro, Devin, and Grok — OAuth/CLI auth, streaming, and auto-updating model catalogs with disk TTL cache.",
   "type": "module",
   "license": "MIT",
@@ -72,8 +72,8 @@
     }
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^1.0.0",
-    "@earendil-works/pi-coding-agent": "^1.0.0",
+    "@earendil-works/pi-ai": "^1.1.0",
+    "@earendil-works/pi-coding-agent": "^1.1.0",
     "@types/node": "^22.18.6",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

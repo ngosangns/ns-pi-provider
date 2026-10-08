@@ -1,4 +1,12 @@
-## 0.1.8
+## 0.2.0
+
+### Breaking (kiro)
+
+- Kiro models now come **only** from `ListAvailableModels` (scoped to the credential's region/org/entitlement); the package no longer ships a static Kiro model list.
+- Without a Kiro credential **and** without a saved catalog snapshot (`~/.pi/agent/cache/ns-pi-provider/kiro.models.json`), the `kiro` provider registers with **zero models**. Log in (`/login kiro`) or set `KIRO_API_KEY` to populate it; `config.json` `models` remains a manual override.
+- Derived long-context `-1m` variants (e.g. `claude-sonnet-4-6-1m`) are no longer offered — the API does not advertise them and `claude-sonnet-4.5-1m` was already rejected (`INVALID_MODEL_ID`). Update any settings/default model that referenced a `-1m` id.
+
+### Changes
 
 - fix(kiro): convert wire `modelId` to Kiro's dot form — discovery returns pi dash-form IDs (`claude-sonnet-4-5`) but `GenerateAssistantResponse` requires dot form (`claude-sonnet-4.5`), so every discovered model failed with `INVALID_MODEL_ID` on stream.
 - refactor(kiro): drop the package-shipped model catalog — `ListAvailableModels` is now the sole catalog source (scoped to the key's region/org/entitlement), so the offered set can no longer drift stale. `config.json` `models` remains a user override for custom upstreams; derived `-1m` variants are no longer offered since the API does not advertise them.
@@ -6,6 +14,7 @@
 - feat(kiro): carry `thinkingLevelMap` through discovered models (opus 4.6/4.7 thinking levels incl. `xhigh`) via a client-side name heuristic — the API does not report it.
 - chore(kiro): remove vendored dead code (`stream.ts` + `tokenizer.ts`/`thinking-parser.ts`/`event-parser.ts`/`transform.ts`/`models.ts`) that pinned the static catalog and was never wired into the provider.
 - fix(grok): scope ACP agent disposal to the shutting-down session (port of upstream pi-grok-sdk `45fde95`) — `session_shutdown` now disposes only that session's pool entry (keyed by its session file/id) instead of every agent, `session_start` for another session no longer tears down the previous scope, and a single module-level `process.exit` hook replaces one per registration. Multi-session hosts sharing one Node process no longer kill other open chats' Grok agents.
+- chore: dev/test against `@earendil-works/pi-ai` / `pi-coding-agent` 1.1.0 (peer ranges unchanged: `*`).
 - test: extension registration accepts an empty kiro catalog when no credential or cached `ListAvailableModels` snapshot exists (hermetic CI no longer depends on `~/.pi` cache).
 - test(kiro): add live per-model probe (`tests/live/kiro-models.test.ts`) streaming a minimal request through every discovered model; opt-in via `NS_PI_LIVE=1`, `NS_PI_MODEL_FILTER`, `NS_PI_MODEL_TIMEOUT_MS`.
 
