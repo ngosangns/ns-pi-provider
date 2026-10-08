@@ -94,6 +94,12 @@ interface KiroStreamState {
   totalContentLength: number;
   contextUsagePercentage: number;
   usage?: Usage;
+  /** `metadataEvent.stopReason`, verbatim (END_TURN, TOOL_USE, MAX_TOKENS, ...). */
+  wireStopReason?: string;
+  /** `metadataEvent.stopDetails`, verbatim, quoted (redacted) on refusal. */
+  wireStopDetails?: JsonRecord;
+  /** Token counts merged across `metadataEvent.tokenUsage` frames. */
+  wireTokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
 }
 
 interface KiroStreamingToolCall {
@@ -631,6 +637,99 @@ function buildUsage(model: Model<Api>, tokens: { input: number; output: number; 
   return usage;
 }
 
+const CACHE_READ_KEYS = ["cacheReadInputTokens", "cache_read_input_tokens", "cacheReadTokens"] as const;
+const CACHE_WRITE_KEYS = ["cacheWriteInputTokens", "cache_creation_input_tokens", "cacheCreationInputTokens", "cacheCreationTokens"] as const;
+
+function optionalCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function firstCount(record: JsonRecord, keys: readonly string[]): number | undefined {
+  for (const key of keys) {
+    const value = optionalCount(record[key]);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+/**
+ * `metadataEvent` (ported from ns-kiro-provider kiro-core 1e363bc / upstream
+ * pi-provider-kiro #174). Every field is optional and the service may split
+ * `tokenUsage` and `stopReason`/`stopDetails` across frames, so merge rather
+ * than overwrite. Kiro currently sends no token counts (billing arrives on
+ * `meteringEvent`), but counts are honoured when present.
+ */
+function applyKiroMetadata(state: KiroStreamState, model: Model<Api>, payload: JsonRecord): void {
+  const metadata = isRecord(payload.metadataEvent) ? payload.metadataEvent : payload;
+  const stopReason = optionalString(metadata.stopReason);
+  if (stopReason) state.wireStopReason = stopReason;
+  if (isRecord(metadata.stopDetails)) state.wireStopDetails = metadata.stopDetails;
+
+  const tokenUsage = isRecord(metadata.tokenUsage) ? metadata.tokenUsage : undefined;
+  if (!tokenUsage) return;
+  const percentage = numberFrom(tokenUsage.contextUsagePercentage);
+  if (percentage > 0) state.contextUsagePercentage = percentage;
+  const next = {
+    input: optionalCount(tokenUsage.uncachedInputTokens) ?? optionalCount(tokenUsage.inputTokens),
+    output: optionalCount(tokenUsage.outputTokens),
+    cacheRead: firstCount(tokenUsage, CACHE_READ_KEYS),
+    cacheWrite: firstCount(tokenUsage, CACHE_WRITE_KEYS),
+  };
+  const merged = { ...(state.wireTokens ?? {}) };
+  for (const [key, value] of Object.entries(next) as Array<[keyof typeof next, number | undefined]>) {
+    if (value !== undefined) merged[key] = value;
+  }
+  state.wireTokens = merged;
+  const tokens = { input: merged.input ?? 0, output: merged.output ?? 0, cacheRead: merged.cacheRead ?? 0, cacheWrite: merged.cacheWrite ?? 0 };
+  if (tokens.input > 0 || tokens.output > 0 || tokens.cacheRead > 0 || tokens.cacheWrite > 0) {
+    state.usage = buildUsage(model, tokens);
+  }
+}
+
+const DIAGNOSTIC_QUOTE_LIMIT = 500;
+
+function clampForDiagnostic(text: string): string {
+  return text.length <= DIAGNOSTIC_QUOTE_LIMIT ? text : `${text.slice(0, DIAGNOSTIC_QUOTE_LIMIT)}… (truncated)`;
+}
+
+/**
+ * Terminal `metadataEvent.stopReason`s end the request as an error instead of
+ * a silently "finished" turn. Thrown before tool calls are closed or `done` is
+ * pushed, so a refused/overflowed turn's tool calls never reach the host as a
+ * completed turn. The overflow message contains `context_length_exceeded` /
+ * "context window exceeded" so Pi's and OMP's overflow detectors (auto-compact)
+ * recognise it.
+ */
+function throwOnTerminalWireStop(state: KiroStreamState): void {
+  switch (state.wireStopReason) {
+    case "MODEL_CONTEXT_WINDOW_EXCEEDED":
+      throw new Error("Kiro API error: context_length_exceeded (MODEL_CONTEXT_WINDOW_EXCEEDED): the model context window exceeded its limit");
+    case "CONTENT_FILTERED":
+      throw new Error(`Kiro content filtered (CONTENT_FILTERED): ${clampForDiagnostic(redactSensitiveString(JSON.stringify(state.wireStopDetails ?? {})))}`);
+    case "PAUSE_TURN":
+      throw new Error("Kiro paused the turn (PAUSE_TURN); automatic continuation is not supported");
+  }
+}
+
+/**
+ * Map the wire stop onto Pi's. MAX_TOKENS is truncation even when tool calls
+ * parsed: hosts (Pi and OMP agent loops) refuse to execute tool calls from a
+ * `length` turn, so a cut-off call never runs with partial arguments.
+ */
+function resolveStopReason(state: KiroStreamState): "stop" | "toolUse" | "length" {
+  if (state.wireStopReason === "MAX_TOKENS") return "length";
+  return state.hasToolCalls ? "toolUse" : "stop";
+}
+
+/** `:message-type: exception|error` frames carry a modeled service error mid-stream. */
+function throwOnExceptionFrame(headers: Record<string, string>, payload: JsonRecord | null): void {
+  const messageType = headers[":message-type"];
+  if (messageType !== "exception" && messageType !== "error") return;
+  const kind = headers[":exception-type"] ?? headers[":error-code"] ?? "error";
+  const message = (payload ? optionalString(payload.message) ?? optionalString(payload.Message) ?? optionalString(payload.error) : undefined) ?? headers[":error-message"] ?? "";
+  throw new Error(`Kiro stream ${kind}: ${clampForDiagnostic(redactSensitiveString(message || "no details"))}`);
+}
+
 function usageFromMetrics(model: Model<Api>, metrics: JsonRecord): Usage | undefined {
   const input = numberFrom(metrics.inputTokens);
   const output = numberFrom(metrics.outputTokens);
@@ -833,6 +932,10 @@ function handleEvent(stream: AssistantMessageEventStream, output: AssistantMessa
     if (percentage > 0) state.contextUsagePercentage = percentage;
     return;
   }
+  if (eventType === "metadataEvent") {
+    applyKiroMetadata(state, model, payload);
+    return;
+  }
   if (eventType === "metricsEvent") {
     const metrics = isRecord(payload.metricsEvent) ? payload.metricsEvent : payload;
     state.usage = usageFromMetrics(model, metrics);
@@ -862,16 +965,18 @@ async function consumeKiroEventStream(response: Response, stream: AssistantMessa
       if (!frameBytes) break;
       const frame = parseEventFrame(frameBytes, logger);
       if (!frame) continue;
+      throwOnExceptionFrame(frame.headers, frame.payload);
       handleEvent(stream, output, state, model, frame.headers[":event-type"] ?? "", frame.payload);
     }
     if (iterations >= 1000) logger.warn("eventstream_iteration_limit_reached", { remainingBytes: queue.length });
   }
 
+  throwOnTerminalWireStop(state);
   closeThinkingBlock(stream, output, state);
   closeTextBlock(stream, output, state);
   closeToolCalls(stream, output, state);
   output.usage = state.usage ?? estimatedUsage(model, state) ?? output.usage;
-  output.stopReason = state.hasToolCalls ? "toolUse" : "stop";
+  output.stopReason = resolveStopReason(state);
   stream.push({ type: "done", reason: output.stopReason, message: output });
   stream.end(output);
 }

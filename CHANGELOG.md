@@ -1,3 +1,10 @@
+## 0.2.1
+
+- fix(kiro): honour `metadataEvent` stop reasons (ported from ns-kiro-provider kiro-core `1e363bc` / upstream pi-provider-kiro #174). `MAX_TOKENS` now reports `length` even when a tool call parsed, so Pi/OMP agent loops refuse to run a cut-off tool call with partial arguments; `END_TURN`/`TOOL_USE` settle `stop`/`toolUse` as before.
+- fix(kiro): terminal stops end the request as errors instead of a silent `stop` — `CONTENT_FILTERED` (redacted, clamped `stopDetails`), `MODEL_CONTEXT_WINDOW_EXCEEDED` (worded `context_length_exceeded` so Pi/OMP auto-compaction detects overflow), and `PAUSE_TURN`. Thrown before tool calls close, so a refused turn's tool calls never reach the host as completed. No automatic retry is added (live Kiro marks every normal turn `END_TURN`).
+- fix(kiro): read `metadataEvent.tokenUsage` (uncached/input, output, cache read/write, `contextUsagePercentage`), merged across split frames, when the service reports it.
+- fix(kiro): mid-stream `:message-type: exception` frames (e.g. throttling) surface as errors instead of being dropped.
+
 ## 0.2.0
 
 ### Breaking (kiro)
